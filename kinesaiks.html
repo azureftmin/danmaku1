@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Danmaku STG - 9 Stages of Hell</title>
+    <style>
+        body { background: #000; color: #fff; font-family: 'Courier New', monospace; margin: 0; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        #game-container { position: relative; border: 2px solid #555; }
+        canvas { background: #050510; display: block; }
+        #ui { position: absolute; top: 0; left: 0; width: 100%; padding: 10px; box-sizing: border-box; pointer-events: none; }
+        .hp-bar-bg { width: 100%; height: 6px; background: #333; margin-top: 5px; border: 1px solid #777; }
+        #hp-bar-fill { width: 100%; height: 100%; background: linear-gradient(90deg, #f00, #ff0); transition: width 0.1s; }
+        .info { display: flex; justify-content: space-between; font-size: 14px; text-shadow: 1px 1px 2px #000; }
+        #msg { position: absolute; top: 40%; width: 100%; text-align: center; font-size: 32px; font-weight: bold; color: #f0f; display: none; text-shadow: 2px 2px 5px #000; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="ui">
+        <div class="info">
+            <span>STAGE: <b id="stage-val">1</b>/9</span>
+            <span>SCORE: <b id="score-val">0</b></span>
+        </div>
+        <div class="hp-bar-bg"><div id="hp-bar-fill"></div></div>
+    </div>
+    <div id="msg">STAGE CLEAR</div>
+    <canvas id="gameCanvas"></canvas>
+</div>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+canvas.width = 450;
+canvas.height = 600;
+
+// --- ゲーム設定 ---
+let stage = 1;
+let score = 0;
+let frames = 0;
+let isGameOver = false;
+let isTransitioning = false;
+
+const keys = {};
+window.onkeydown = (e) => keys[e.code] = true;
+window.onkeyup = (e) => keys[e.code] = false;
+
+// --- オブジェクト ---
+const player = {
+    x: 225, y: 500, r: 2, visualR: 8, speed: 4.5,
+    draw() {
+        ctx.fillStyle = "#0df";
+        ctx.beginPath(); ctx.arc(this.x, this.y, this.visualR, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = "#fff"; // 核心（当たり判定）
+        ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.fill();
+    },
+    update() {
+        let s = keys['ShiftLeft'] ? this.speed / 2.5 : this.speed;
+        if (keys['ArrowUp'] && this.y > 20) this.y -= s;
+        if (keys['ArrowDown'] && this.y < canvas.height - 20) this.y += s;
+        if (keys['ArrowLeft'] && this.x > 20) this.x -= s;
+        if (keys['ArrowRight'] && this.x < canvas.width - 20) this.x += s;
+    }
+};
+
+const boss = {
+    x: 225, y: 100, r: 30, hp: 3000, maxHp: 3000,
+    update() {
+        this.x = 225 + Math.sin(frames * 0.01) * 100;
+        this.y = 100 + Math.cos(frames * 0.01) * 20;
+    },
+    draw() {
+        ctx.strokeStyle = "#f0f"; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.stroke();
+    }
+};
+
+let eBullets = [];
+let pBullets = [];
+
+class Bullet {
+    constructor(x, y, vx, vy, color, r) {
+        this.x = x; this.y = y; this.vx = vx; this.vy = vy; this.color = color; this.r = r;
+    }
+    update() { this.x += this.vx; this.y += this.vy; }
+    draw() {
+        ctx.fillStyle = this.color;
+        ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.fill();
+    }
+}
+
+// --- 弾幕定義 (難易度は徐々に上昇) ---
+function shoot() {
+    if (isTransitioning) return;
+    const f = frames;
+    const b = boss;
+    
+    // 基本パラメータ
+    const diffMult = 1 + (stage - 1) * 0.2; // ステージが進むほど弾速などが上昇
+
+    switch(stage) {
+        case 1: // 渦巻き
+            if (f % 6 === 0) createRing(b.x, b.y, f * 0.1, 2 * diffMult, "#fff", 3, 1);
+            break;
+        case 2: // 二重螺旋
+            if (f % 4 === 0) {
+                createRing(b.x, b.y, f * 0.15, 2.5 * diffMult, "#f0f", 3, 2);
+                createRing(b.x, b.y, -f * 0.15, 2.5 * diffMult, "#0ff", 3, 2);
+            }
+            break;
+        case 3: // 5WAY狙い撃ち
+            if (f % 25 === 0) {
+                let angle = Math.atan2(player.y - b.y, player.x - b.x);
+                for(let i=-2; i<=2; i++) createRing(b.x, b.y, angle + i*0.2, 3 * diffMult, "#ff0", 4, 1);
+            }
+            break;
+        case 4: // 全方位拡散
+            if (f % 15 === 0) createRing(b.x, b.y, Math.random()*Math.PI, 2 * diffMult, "#0f0", 3, 12);
+            break;
+        case 5: // 交差スパイラル
+            if (f % 8 === 0) {
+                for(let i=0; i<4; i++) createRing(b.x, b.y, (f*0.05) + (i*Math.PI/2), 3 * diffMult, "#fa0", 4, 1);
+            }
+            break;
+        case 6: // 加速弾幕
+            if (f % 20 === 0) {
+                for(let i=0; i<16; i++) {
+                    let bul = new Bullet(b.x, b.y, Math.cos(i*Math.PI/8), Math.sin(i*Math.PI/8), "#44f", 4);
+                    bul.update = function() { this.vx *= 1.02; this.vy *= 1.02; this.x += this.vx; this.y += this.vy; };
+                    eBullets.push(bul);
+                }
+            }
+            break;
+        case 7: // 跳ね返り擬き（上下移動）
+            if (f % 10 === 0) createRing(b.x, b.y, Math.sin(f*0.05)*3, 3.5 * diffMult, "#f44", 3, 10);
+            break;
+        case 8: // 高速ランダム＆狙い撃ち
+            if (f % 2 === 0) createRing(b.x, b.y, Math.random()*Math.PI*2, 4 * diffMult, "#fff", 2, 1);
+            if (f % 40 === 0) {
+                let a = Math.atan2(player.y - b.y, player.x - b.x);
+                createRing(b.x, b.y, a, 5 * diffMult, "#f00", 6, 8);
+            }
+            break;
+        case 9: // 最終弾幕「カオス」
+            createRing(b.x, b.y, f * 0.2, 2 * diffMult, "#fff", 2, 4);
+            createRing(b.x, b.y, -f * 0.1, 3 * diffMult, "#f0f", 3, 3);
+            if (f % 20 === 0) createRing(b.x, b.y, Math.random()*6, 1.5, "#0ff", 8, 10);
+            break;
+    }
+}
+
+function createRing(x, y, startAngle, speed, color, r, count) {
+    for (let i = 0; i < count; i++) {
+        const angle = startAngle + (Math.PI * 2 / count) * i;
+        eBullets.push(new Bullet(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, color, r));
+    }
+}
+
+// --- メインループ ---
+function update() {
+    if (isGameOver) return;
+    frames++;
+    player.update();
+    boss.update();
+    shoot();
+
+    // 自機弾
+    if (keys['KeyZ'] && frames % 5 === 0) pBullets.push(new Bullet(player.x, player.y - 10, 0, -12, "#fff", 3));
+
+    // 衝突判定：自機弾 vs ボス
+    pBullets.forEach((pb, i) => {
+        pb.update();
+        if (Math.hypot(pb.x - boss.x, pb.y - boss.y) < boss.r) {
+            boss.hp -= 8;
+            pBullets.splice(i, 1);
+            score += 10;
+        }
+        if (pb.y < 0) pBullets.splice(i, 1);
+    });
+
+    // 衝突判定：敵弾 vs 自機
+    eBullets.forEach((eb, i) => {
+        eb.update();
+        if (Math.hypot(eb.x - player.x, eb.y - player.y) < eb.r + player.r) {
+            gameOver();
+        }
+        if (eb.x < -20 || eb.x > canvas.width + 20 || eb.y < -20 || eb.y > canvas.height + 20) {
+            eBullets.splice(i, 1);
+        }
+    });
+
+    // UI更新
+    document.getElementById("hp-bar-fill").style.width = (boss.hp / boss.maxHp * 100) + "%";
+    document.getElementById("score-val").innerText = score;
+    document.getElementById("stage-val").innerText = stage;
+
+    // クリア判定
+    if (boss.hp <= 0 && !isTransitioning) {
+        if (stage < 9) nextStage();
+        else win();
+    }
+}
+
+function nextStage() {
+    isTransitioning = true;
+    document.getElementById("msg").style.display = "block";
+    eBullets = [];
+    setTimeout(() => {
+        stage++;
+        boss.maxHp += 1000; // ボスがタフになる
+        boss.hp = boss.maxHp;
+        isTransitioning = false;
+        document.getElementById("msg").style.display = "none";
+    }, 2000);
+}
+
+function gameOver() {
+    isGameOver = true;
+    alert("被弾しました！\nSCORE: " + score + "\nSTAGE: " + stage);
+    location.reload();
+}
+
+function win() {
+    isGameOver = true;
+    alert("全9ステージクリア！あなたは真のシューターです！\nFINAL SCORE: " + score);
+    location.reload();
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    player.draw();
+    boss.draw();
+    pBullets.forEach(b => b.draw());
+    eBullets.forEach(b => b.draw());
+    if (!isGameOver) requestAnimationFrame(() => { update(); draw(); });
+}
+
+draw();
+</script>
+</body>
+</html>

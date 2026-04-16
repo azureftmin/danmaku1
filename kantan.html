@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>幻想二十五番勝負 - Gensokyo 25 Trials</title>
+    <style>
+        body { background: #000; color: #fff; font-family: 'MS Gothic', sans-serif; margin: 0; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        #game-container { position: relative; border: 4px double #888; background: #000210; overflow: hidden; box-shadow: 0 0 20px rgba(0,0,100,0.5); }
+        canvas { display: block; }
+        #ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        .hp-bar { position: absolute; top: 10px; left: 10%; width: 80%; height: 8px; background: #222; border: 1px solid #fff; }
+        #hp-fill { width: 100%; height: 100%; background: linear-gradient(90deg, #f00, #ff0); transition: width 0.1s; }
+        #lives-container { position: absolute; top: 25px; left: 10px; color: #ff69b4; font-size: 24px; text-shadow: 0 0 5px #fff; }
+        .info-panel { position: absolute; top: 25px; right: 10px; text-align: right; font-size: 14px; line-height: 1.5; color: #0f0; }
+        #spell-name { position: absolute; top: 50px; width: 100%; text-align: center; color: #f0f; font-weight: bold; font-size: 20px; text-shadow: 0 0 10px #fff; opacity: 0; transition: opacity 0.5s; }
+        #pause-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 100; }
+        .menu-item { font-size: 30px; color: #fff; border: 2px solid #fff; padding: 10px 40px; background: rgba(255,255,255,0.1); cursor: pointer; }
+        .active-item { border-color: #0ff; color: #0ff; box-shadow: 0 0 15px #0ff; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="ui">
+        <div class="hp-bar"><div id="hp-fill"></div></div>
+        <div id="lives-container"></div>
+        <div class="info-panel">
+            STAGE: <span id="stg-val">1</span>/25<br>
+            BOMB: <span id="bomb-val">3</span>/3<br>
+            SCORE: <span id="score-val">0</span>
+        </div>
+        <div id="spell-name"></div>
+    </div>
+    <div id="pause-screen">
+        <h1 style="font-size: 48px; margin-bottom: 20px;">PAUSE</h1>
+        <div class="menu-item active-item">▶ 再開 (Z/Enter)</div>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+</div>
+
+<script>
+/** * ZUN-Style Sound Engine
+ * ブラウザのWeb Audio APIを使用して、外部ファイル無しでトランペット、ピアノ、ベースを合成します。
+ */
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+const masterGain = audioCtx.createGain(); masterGain.gain.value = 0.12; masterGain.connect(audioCtx.destination);
+
+function playZunNote(freq, type, dur, vol, slide = 0) {
+    const osc = audioCtx.createOscillator(); const g = audioCtx.createGain();
+    osc.type = type; osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    if(slide) osc.frequency.exponentialRampToValueAtTime(slide, audioCtx.currentTime + dur);
+    g.gain.setValueAtTime(vol, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + dur);
+    osc.connect(g); g.connect(masterGain); osc.start(); osc.stop(audioCtx.currentTime + dur);
+}
+
+function tickBGM(stg, frame) {
+    if (frame % 8 !== 0) return;
+    const scales = [261, 293, 311, 349, 392, 415, 466]; // ZUN調に多いマイナースケール
+    const melody = scales[(Math.floor(frame/8) + stg) % scales.length];
+    if (frame % 16 === 0) playZunNote(melody, 'sawtooth', 0.4, 0.08, melody * 1.05); // トランペット
+    if (frame % 8 === 0) playZunNote(melody * 2, 'sine', 0.15, 0.1);               // ピアノ
+    if (frame % 32 === 0) playZunNote(melody / 2, 'square', 0.6, 0.12);            // ベース
+}
+
+/** * ゲームコアロジック
+ */
+const canvas = document.getElementById("gameCanvas"); const ctx = canvas.getContext("2d");
+canvas.width = 480; canvas.height = 700;
+
+let stage = 1, lives = 3, bombs = 3, score = 0, frames = 0;
+let isSpell = false, isPaused = false, isGameOver = false, invul = 0, bombTimer = 0;
+let transitioning = false;
+
+const player = { x: 240, y: 620, r: 2 };
+const boss = { x: 240, y: 140, hp: 800, maxHp: 800 };
+let eBullets = [], pBullets = [], items = [];
+
+const keys = {};
+window.onkeydown = (e) => {
+    keys[e.code] = true;
+    if (e.code === 'Escape' && !isGameOver && !transitioning) togglePause();
+    if (isPaused && (e.code === 'KeyZ' || e.code === 'Enter')) togglePause();
+    if (e.code === 'KeyX' && bombs > 0 && !isPaused && !invul && !transitioning) useBomb();
+};
+window.onkeyup = (e) => keys[e.code] = false;
+
+function togglePause() {
+    isPaused = !isPaused;
+    document.getElementById("pause-screen").style.display = isPaused ? "flex" : "none";
+}
+
+function useBomb() {
+    bombs--; invul = 200; bombTimer = 200; eBullets = [];
+    playZunNote(60, 'sawtooth', 2, 0.6, 30); updateUI();
+}
+
+function updateUI() {
+    document.getElementById("lives-container").innerText = "★".repeat(Math.max(0, lives));
+    document.getElementById("bomb-val").innerText = bombs;
+    document.getElementById("stg-val").innerText = stage;
+    document.getElementById("score-val").innerText = score;
+    const currentMax = isSpell ? boss.maxHp * 1.5 : boss.maxHp;
+    document.getElementById("hp-fill").style.width = Math.max(0, (boss.hp / currentMax) * 100) + "%";
+}
+
+function createBullet(x, y, angle, speed, color, r, snipe = false) {
+    let vx = Math.cos(angle) * speed, vy = Math.sin(angle) * speed;
+    if (snipe) {
+        const a = Math.atan2(player.y - y, player.x - x);
+        vx = Math.cos(a) * speed; vy = Math.sin(a) * speed;
+    }
+    eBullets.push({ x, y, vx, vy, color, r });
+}
+
+function loop() {
+    if (isGameOver) return;
+    if (!isPaused) {
+        frames++;
+        if (!transitioning) tickBGM(stage, frames);
+        if (frames % 1000 === 0) items.push({ x: Math.random() * 400 + 40, y: -20 });
+
+        // ボムの自動ダメージ
+        if (bombTimer > 0) { 
+            bombTimer--; 
+            boss.hp -= (2.5 + stage * 0.1); 
+            eBullets = []; 
+        }
+
+        // 移動
+        let s = keys['ShiftLeft'] ? 2.5 : 6;
+        if (keys['ArrowUp'] && player.y > 30) player.y -= s;
+        if (keys['ArrowDown'] && player.y < canvas.height - 30) player.y += s;
+        if (keys['ArrowLeft'] && player.x > 30) player.x -= s;
+        if (keys['ArrowRight'] && player.x < canvas.width - 30) player.x += s;
+
+        // ショット
+        if (keys['KeyZ'] && frames % 5 === 0) {
+            pBullets.push({ x: player.x, y: player.y - 20 });
+            playZunNote(1100, 'square', 0.04, 0.02);
+        }
+
+        // 当たり判定更新
+        pBullets.forEach((b, i) => {
+            b.y -= 16;
+            if (Math.hypot(b.x - boss.x, b.y - boss.y) < 40) { boss.hp -= 10; pBullets.splice(i, 1); score += 10; }
+            if (b.y < -20) pBullets.splice(i, 1);
+        });
+
+        if (invul > 0) invul--;
+
+        eBullets.forEach((b, i) => {
+            b.x += b.vx; b.y += b.vy;
+            if (!invul && Math.hypot(b.x - player.x, b.y - player.y) < b.r + player.r) {
+                lives--; playZunNote(140, 'sawtooth', 0.6, 0.4, 40);
+                if (lives < 0) { isGameOver = true; alert("GAME OVER - 満身創痍"); location.reload(); }
+                else { invul = 150; player.x = 240; player.y = 620; eBullets = []; updateUI(); }
+            }
+            if (b.y > 750 || b.y < -50 || b.x < -50 || b.x > 530) eBullets.splice(i, 1);
+        });
+
+        items.forEach((it, i) => {
+            it.y += 2.5;
+            if (Math.hypot(it.x - player.x, it.y - player.y) < 30) {
+                lives += 2; playZunNote(1300, 'sine', 0.3, 0.3); items.splice(i, 1); updateUI();
+            }
+            if (it.y > 750) items.splice(i, 1);
+        });
+
+        // 敵弾幕アルゴリズム
+        if (!transitioning) {
+            const diff = 1 + (stage * 0.04);
+            if (!isSpell) {
+                if (frames % Math.max(2, 25 - Math.floor(stage/3)) === 0) createBullet(boss.x, boss.y, 0, 1.8 * diff, "#fff", 4, true);
+                if (frames % 70 === 0) {
+                    for(let i=0; i<8; i++) createBullet(boss.x, boss.y, i*Math.PI/4 + frames*0.02, 1.4 * diff, "#0ff", 5);
+                }
+            } else {
+                document.getElementById("spell-name").style.opacity = 1;
+                document.getElementById("spell-name").innerText = "「幻想の第" + stage + "試練」";
+                if (frames % 4 === 0) createBullet(boss.x, boss.y, frames * 0.12, 2.0 * diff, "#f0f", 3);
+                if (frames % 60 === 0) {
+                    for(let i=0; i<10; i++) createBullet(boss.x, boss.y, i*Math.PI/5, 2.8 * diff, "#ff0", 6, true);
+                }
+            }
+        }
+
+        // フェーズ遷移
+        if (boss.hp <= 0 && !transitioning) {
+            if (!isSpell) {
+                isSpell = true; boss.hp = boss.maxHp * 1.5; eBullets = []; playZunNote(1600, 'sine', 0.8, 0.2);
+            } else {
+                if (stage === 25) { isGameOver = true; alert("ALL STAGES CLEAR!"); location.reload(); }
+                else {
+                    transitioning = true;
+                    setTimeout(() => {
+                        stage++; bombs = 3; isSpell = false; boss.hp = boss.maxHp;
+                        eBullets = []; transitioning = false;
+                        document.getElementById("spell-name").style.opacity = 0; updateUI();
+                    }, 1200);
+                }
+            }
+        }
+        boss.x = 240 + Math.sin(frames * 0.02) * 140;
+        updateUI();
+    }
+
+    // 描画
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (bombTimer > 0) {
+        ctx.fillStyle = `rgba(0, 255, 100, ${bombTimer/200})`;
+        ctx.fillRect(0,0,canvas.width,canvas.height);
+    }
+    // 自機
+    if (invul % 4 < 2) {
+        ctx.fillStyle = "#0df"; ctx.beginPath(); ctx.arc(player.x, player.y, 10, 0, 7); ctx.fill();
+        ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(player.x, player.y, player.r + 2, 0, 7); ctx.fill();
+    }
+    // ボス
+    ctx.strokeStyle = isSpell ? "#f0f" : "#fff"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(boss.x, boss.y, 38, 0, 7); ctx.stroke();
+    // アイテム(星)
+    items.forEach(it => {
+        ctx.fillStyle = "#ff0"; ctx.beginPath();
+        for(let i=0; i<5; i++) {
+            ctx.lineTo(it.x + Math.cos(i*Math.PI*0.8 - Math.PI/2)*15, it.y + Math.sin(i*Math.PI*0.8 - Math.PI/2)*15);
+        }
+        ctx.closePath(); ctx.fill();
+    });
+    // 弾
+    ctx.fillStyle = "#fff"; pBullets.forEach(b => ctx.fillRect(b.x-2, b.y, 4, 18));
+    eBullets.forEach(b => { ctx.fillStyle = b.color; ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, 7); ctx.fill(); });
+
+    requestAnimationFrame(loop);
+}
+
+updateUI();
+loop();
+</script>
+</body>
+</html>

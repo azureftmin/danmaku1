@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>幻想終局 ～ 30 Stages of Hell</title>
+    <style>
+        body { background: #000; color: #fff; font-family: 'MS Gothic', sans-serif; margin: 0; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        #game-container { position: relative; border: 4px double #f00; background: #000210; overflow: hidden; }
+        canvas { display: block; }
+        #ui { position: absolute; top: 0; left: 0; width: 100%; padding: 10px; box-sizing: border-box; pointer-events: none; }
+        .hp-bar { width: 100%; height: 10px; background: #222; border: 1px solid #f00; margin-bottom: 5px; }
+        #hp-fill { width: 100%; height: 100%; background: linear-gradient(90deg, #f00, #ff0); transition: width 0.05s; }
+        .stats { display: flex; justify-content: space-between; font-weight: bold; }
+        #lives { color: #ff69b4; font-size: 28px; text-shadow: 0 0 8px #fff; }
+        .bomb-info { color: #0f0; font-size: 16px; text-align: right; text-shadow: 0 0 5px #0f0; }
+        #spell-name { color: #f0f; font-weight: bold; text-align: center; font-size: 22px; text-shadow: 0 0 15px #fff; margin-top: 5px; min-height: 1.2em; }
+        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(50,0,0,0.8); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 100; }
+        .menu-item { font-size: 30px; color: #fff; border: 3px solid #fff; padding: 10px 50px; background: rgba(255,0,0,0.2); cursor: pointer; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="ui">
+        <div class="hp-bar"><div id="hp-fill"></div></div>
+        <div class="stats">
+            <div id="lives"></div>
+            <div class="bomb-info">
+                BOMB: <span id="bomb-val">3</span>/3<br>
+                STAGE: <span id="stage-val">1</span>/30<br>
+                SCORE: <span id="score-val">0</span>
+            </div>
+        </div>
+        <div id="spell-name"></div>
+    </div>
+    <div id="overlay">
+        <h1 style="color: #f00; font-size: 50px;">PAUSE</h1>
+        <div class="menu-item" id="resume-btn">▶ 再開 (Z / Enter)</div>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+</div>
+
+<script>
+/** * ZUN調音響エンジン **/
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+const masterGain = audioCtx.createGain(); masterGain.gain.value = 0.15; masterGain.connect(audioCtx.destination);
+
+function playNote(freq, type, dur, vol, slide = 0) {
+    try {
+        const osc = audioCtx.createOscillator(); const g = audioCtx.createGain();
+        osc.type = type; osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        if(slide) osc.frequency.exponentialRampToValueAtTime(slide, audioCtx.currentTime + dur);
+        g.gain.setValueAtTime(vol, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + dur);
+        osc.connect(g); g.connect(masterGain); osc.start(); osc.stop(audioCtx.currentTime + dur);
+    } catch(e) {}
+}
+
+function playBGM(stg, frame) {
+    if (frame % 8 !== 0) return;
+    const baseFreqs = [220, 261, 293, 311, 349, 392];
+    const freq = baseFreqs[(Math.floor(frame/8) + stg) % baseFreqs.length] * (1 + stg*0.1);
+    if (frame % 16 === 0) playNote(freq, 'sawtooth', 0.4, 0.08, freq*1.05); // ZUNペット
+    if (frame % 8 === 0) playNote(freq * 2, 'sine', 0.15, 0.1);            // ピアノ
+    if (frame % 32 === 0) playNote(freq / 2, 'square', 0.6, 0.2);         // ベース
+}
+
+/** * ゲームコア **/
+const canvas = document.getElementById("gameCanvas"); const ctx = canvas.getContext("2d");
+canvas.width = 550; canvas.height = 800;
+
+let stage = 1, lives = 3, bombs = 3, score = 0, frames = 0, starCount = 0;
+let isSpell = false, isPaused = false, isGameOver = false, invul = 0, bombTimer = 0;
+let transitioning = false;
+
+const player = { x: 275, y: 700, r: 2 };
+const boss = { x: 275, y: 150, hp: 10000, maxHp: 10000 };
+let eBullets = [], pBullets = [], enemies = [], items = [];
+
+const keys = {};
+window.onkeydown = (e) => {
+    keys[e.code] = true;
+    if (e.code === 'Escape' && !isGameOver && !transitioning) togglePause();
+    if (isPaused && (e.code === 'KeyZ' || e.code === 'Enter')) togglePause();
+    if (e.code === 'KeyX' && bombs > 0 && !isPaused && !invul && !transitioning) startBomb();
+};
+window.onkeyup = (e) => keys[e.code] = false;
+
+function togglePause() {
+    isPaused = !isPaused;
+    document.getElementById("overlay").style.display = isPaused ? "flex" : "none";
+}
+
+function startBomb() {
+    bombs--; invul = 250; bombTimer = 250; eBullets = [];
+    playNote(50, 'sawtooth', 2.5, 0.8, 20); updateUI();
+}
+
+function updateUI() {
+    document.getElementById("lives").innerText = "★".repeat(Math.max(0, lives));
+    document.getElementById("bomb-val").innerText = bombs;
+    document.getElementById("stage-val").innerText = stage;
+    document.getElementById("score-val").innerText = score;
+    const currentMax = isSpell ? boss.maxHp * 3 : boss.maxHp;
+    document.getElementById("hp-fill").style.width = Math.max(0, (boss.hp / currentMax) * 100) + "%";
+}
+
+function createBullet(x, y, angle, speed, color, r, snipe = false) {
+    let vx = Math.cos(angle) * speed, vy = Math.sin(angle) * speed;
+    if (snipe) {
+        const a = Math.atan2(player.y - y, player.x - x);
+        vx = Math.cos(a) * speed; vy = Math.sin(a) * speed;
+    }
+    eBullets.push({ x, y, vx, vy, color, r });
+}
+
+function loop() {
+    if (isGameOver) return;
+    if (!isPaused) {
+        frames++;
+        if (!transitioning) playBGM(stage, frames);
+        if (bombTimer > 0) { boss.hp -= (15 + stage * 5); bombTimer--; eBullets = []; }
+
+        // 移動
+        let s = keys['ShiftLeft'] ? 2 : 7;
+        if (keys['ArrowUp'] && player.y > 30) player.y -= s;
+        if (keys['ArrowDown'] && player.y < canvas.height - 30) player.y += s;
+        if (keys['ArrowLeft'] && player.x > 30) player.x -= s;
+        if (keys['ArrowRight'] && player.x < canvas.width - 30) player.x += s;
+
+        // 自機ショット
+        if (keys['KeyZ'] && frames % 4 === 0) {
+            pBullets.push({ x: player.x, y: player.y - 20 });
+            playNote(1200, 'square', 0.04, 0.02);
+        }
+
+        // 雑魚敵生成 (頻繁 & 大量)
+        if (frames % Math.max(15, 60 - stage) === 0 && !transitioning) {
+            enemies.push({ x: Math.random() * 500 + 25, y: -50, hp: 100 + stage * 20, t: 0 });
+        }
+
+        // 当たり判定
+        pBullets.forEach((b, i) => {
+            b.y -= 18;
+            if (Math.hypot(b.x - boss.x, b.y - boss.y) < 45) { boss.hp -= 25; pBullets.splice(i, 1); score += 10; }
+            enemies.forEach((e, ei) => {
+                if (Math.hypot(b.x - e.x, b.y - e.y) < 35) {
+                    e.hp -= 30; pBullets.splice(i, 1);
+                    if (e.hp <= 0) { items.push({ x: e.x, y: e.y }); enemies.splice(ei, 1); score += 100; }
+                }
+            });
+            if (b.y < 0) pBullets.splice(i, 1);
+        });
+
+        if (invul > 0) invul--;
+
+        eBullets.forEach((b, i) => {
+            b.x += b.vx; b.y += b.vy;
+            if (!invul && Math.hypot(b.x - player.x, b.y - player.y) < b.r + player.r) {
+                lives--; playNote(100, 'sawtooth', 0.8, 0.5, 40);
+                if (lives < 0) { isGameOver = true; alert("GAME OVER - 最終ステージ: " + stage); location.reload(); }
+                else { invul = 180; player.x = 275; player.y = 700; eBullets = []; updateUI(); }
+            }
+            if (b.y > 850 || b.y < -50 || b.x < -50 || b.x > 600) eBullets.splice(i, 1);
+        });
+
+        enemies.forEach((e, i) => {
+            e.y += 3; e.x += Math.sin(e.t += 0.06) * 6;
+            // 雑魚弾幕 (ステージ弾幕より多め)
+            if (frames % 25 === 0) {
+                for(let k=0; k<3; k++) createBullet(e.x, e.y, (k-1)*0.2, 4 + stage*0.2, "#f44", 4, true);
+            }
+            if (!invul && Math.hypot(e.x - player.x, e.y - player.y) < 30) { lives--; enemies.splice(i, 1); updateUI(); }
+            if (e.y > 850) enemies.splice(i, 1);
+        });
+
+        items.forEach((it, i) => {
+            it.y += 4;
+            if (Math.hypot(it.x - player.x, it.y - player.y) < 40) {
+                starCount++; playNote(1500, 'sine', 0.2, 0.2); items.splice(i, 1);
+                if(starCount >= 2) { lives++; starCount = 0; }
+                updateUI();
+            }
+            if (it.y > 850) items.splice(i, 1);
+        });
+
+        // ボス弾幕 (クリア不可能レベル)
+        if (!transitioning) {
+            const diff = 1 + (stage * 0.3);
+            if (!isSpell) {
+                if (frames % 3 === 0) createBullet(boss.x, boss.y, 0, 4 * diff, "#fff", 5, true);
+                if (frames % 30 === 0) {
+                    let count = 12 + stage;
+                    for(let i=0; i<count; i++) createBullet(boss.x, boss.y, i*Math.PI*2/count + frames*0.05, 3*diff, "#0ff", 4);
+                }
+            } else {
+                document.getElementById("spell-name").innerText = "「地獄の終局：第" + stage + "審判」";
+                if (frames % 2 === 0) createBullet(boss.x, boss.y, frames * 0.3, 3 * diff, "#f0f", 3);
+                if (frames % 20 === 0) {
+                    let count = 20 + stage * 2;
+                    for(let i=0; i<count; i++) createBullet(boss.x, boss.y, i*Math.PI*2/count, 5 * diff, "#ff0", 6, true);
+                }
+            }
+        }
+
+        if (boss.hp <= 0 && !transitioning) {
+            if (!isSpell) { isSpell = true; boss.hp = boss.maxHp * 3; eBullets = []; playNote(2000, 'sine', 1.2, 0.3); }
+            else {
+                if (stage === 30) { isGameOver = true; alert("奇跡！地獄の30ステージを制覇しました！"); location.reload(); }
+                else {
+                    transitioning = true;
+                    setTimeout(() => {
+                        stage++; bombs = 3; isSpell = false; 
+                        boss.maxHp = 10000 + stage * 5000; boss.hp = boss.maxHp;
+                        eBullets = []; enemies = []; items = []; transitioning = false;
+                        document.getElementById("spell-name").innerText = ""; updateUI();
+                    }, 2000);
+                }
+            }
+        }
+        boss.x = 275 + Math.sin(frames * 0.03) * 200;
+        updateUI();
+    }
+
+    // 描画
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (bombTimer > 0) { ctx.fillStyle = `rgba(100, 255, 100, ${bombTimer/250})`; ctx.fillRect(0,0,canvas.width,canvas.height); }
+    // 自機
+    if (invul % 4 < 2) {
+        ctx.fillStyle = "#0df"; ctx.beginPath(); ctx.arc(player.x, player.y, 14, 0, 7); ctx.fill();
+        ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(player.x, player.y, player.r + 2, 0, 7); ctx.fill();
+    }
+    // ボス & 雑魚
+    ctx.strokeStyle = isSpell ? "#f0f" : "#fff"; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(boss.x, boss.y, 45, 0, 7); ctx.stroke();
+    enemies.forEach(e => { ctx.fillStyle = "#f44"; ctx.beginPath(); ctx.arc(e.x, e.y, 25, 0, 7); ctx.fill(); });
+    // ★
+    items.forEach(it => { ctx.fillStyle = "#ff0"; ctx.font = "30px serif"; ctx.fillText("★", it.x-15, it.y); });
+    // 弾
+    ctx.fillStyle = "#fff"; pBullets.forEach(b => ctx.fillRect(b.x-2, b.y, 4, 20));
+    eBullets.forEach(b => { ctx.fillStyle = b.color; ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, 7); ctx.fill(); });
+
+    requestAnimationFrame(loop);
+}
+
+updateUI(); loop();
+</script>
+</body>
+</html>
