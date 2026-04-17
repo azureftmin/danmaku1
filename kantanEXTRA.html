@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>幻想弾幕録 ～ HTML5 Edition</title>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'MS Gothic', 'Courier New', monospace; }
+        #game-wrap { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; background: #000510; }
+        canvas { background: #000; box-shadow: 0 0 50px rgba(0,0,150,0.5); border: 2px solid #333; height: 100%; aspect-ratio: 3/4; }
+        #ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        #pause-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 100; }
+        .hud { position: absolute; color: #fff; text-shadow: 2px 2px #000; font-weight: bold; }
+        #lives { top: 20px; left: 20px; font-size: 28px; color: #ff66aa; }
+        #bombs { top: 60px; left: 20px; font-size: 18px; color: #00ff00; }
+        #stage-info { top: 20px; right: 20px; font-size: 26px; color: #ff88ff; }
+        #boss-ui { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); width: 45%; display: none; }
+        #hp-bar-bg { width: 100%; height: 10px; border: 2px solid #fff; background: rgba(255,255,255,0.2); }
+        #hp-bar-fill { width: 100%; height: 100%; background: linear-gradient(90deg, #f00, #ff0); }
+        #spell-name { color: #0ff; font-style: italic; font-size: 16px; margin-top: 5px; text-align: center; }
+    </style>
+</head>
+<body>
+
+<div id="game-wrap">
+    <canvas id="cvs" width="600" height="800"></canvas>
+    <div id="ui">
+        <div id="lives" class="hud"></div>
+        <div id="bombs" class="hud">BOMBS: 3 / 3</div>
+        <div id="stage-info" class="hud">Stage 1</div>
+        <div id="boss-ui">
+            <div id="hp-bar-bg"><div id="hp-bar-fill"></div></div>
+            <div id="spell-name"></div>
+        </div>
+    </div>
+    <div id="pause-screen">
+        <h1 style="color:#0ff; font-size:60px; margin-bottom:10px;">PAUSE</h1>
+        <p style="color:#fff; font-size:24px;">[Z] or [Enter] to Resume</p>
+    </div>
+</div>
+
+<script>
+/** * AUDIO ENGINE - ZUN調シンセ
+ */
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playZunPet(freq, time, dur, vol = 0.08) {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    const lfo = audioCtx.createOscillator();
+    const lfoGain = audioCtx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(freq, time);
+    lfo.frequency.value = 7.2; 
+    lfoGain.gain.value = freq * 0.025; // 独特なビブラート
+    lfo.connect(lfoGain); lfoGain.connect(osc.frequency);
+    gain.gain.setValueAtTime(0, time);
+    gain.gain.linearRampToValueAtTime(vol, time + 0.05);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    lfo.start(time); osc.start(time);
+    lfo.stop(time + dur);
+}
+
+function playSE(type) {
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    if(type === 'shoot') {
+        osc.frequency.setValueAtTime(900, now);
+        osc.frequency.exponentialRampToValueAtTime(100, now + 0.1);
+        g.gain.setValueAtTime(0.04, now);
+    } else if(type === 'dead') {
+        osc.type = 'square'; osc.frequency.value = 150;
+        g.gain.setValueAtTime(0.3, now); g.gain.linearRampToValueAtTime(0, now + 0.5);
+    }
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(); osc.stop(now + 0.5);
+}
+
+let bgmInterval;
+function startBGM(stage) {
+    if(bgmInterval) clearInterval(bgmInterval);
+    const isEx = stage > 25;
+    const tempo = isEx ? 170 : 120 + (stage * 1.2);
+    const scale = isEx ? [0, 1, 3, 4, 6, 7, 9] : [0, 2, 3, 5, 7, 8, 10]; // 陰旋法
+    let step = 0;
+    bgmInterval = setInterval(() => {
+        if(state.paused) return;
+        const now = audioCtx.currentTime;
+        if(step % 2 === 0) {
+            const note = scale[Math.floor(Math.random() * scale.length)];
+            const freq = 220 * Math.pow(2, (note + (isEx ? 12 : 0)) / 12);
+            playZunPet(freq, now, 0.4, 0.06);
+        }
+        step++;
+    }, 60000 / tempo / 2);
+}
+
+/**
+ * GAME CORE
+ */
+const cvs = document.getElementById('cvs');
+const ctx = cvs.getContext('2d');
+const state = {
+    stage: 1, lives: 3, bombs: 3, bombActive: 0, paused: false,
+    frame: 0, player: { x: 300, y: 700, r: 2, speed: 4.5 },
+    bullets: [], enemyBullets: [], items: [],
+    boss: null, keys: {}
+};
+
+function updateHUD() {
+    document.getElementById('lives').innerHTML = "★".repeat(Math.max(0, state.lives));
+    document.getElementById('bombs').innerText = `BOMBS: ${state.bombs} / 3`;
+    const isEx = state.stage > 25;
+    document.getElementById('stage-info').innerText = isEx ? "Stage EXTRA" : `Stage ${state.stage}`;
+    if(isEx) document.getElementById('stage-info').style.color = "#ff0000";
+}
+
+function spawnBoss() {
+    const isEx = state.stage > 25;
+    state.boss = {
+        x: 300, y: -100, targetY: 150,
+        hp: isEx ? 60000 : 5000 + (state.stage * 1500),
+        maxHp: isEx ? 60000 : 5000 + (state.stage * 1500),
+        isSpell: false
+    };
+    document.getElementById('boss-ui').style.display = 'block';
+    startBGM(state.stage);
+    updateHUD();
+}
+
+window.addEventListener('keydown', e => {
+    state.keys[e.code] = true;
+    if(e.code === 'Escape') togglePause();
+    if(state.paused && (e.code === 'KeyZ' || e.code === 'Enter')) togglePause();
+    if(!state.paused && e.code === 'KeyX' && state.bombs > 0 && state.bombActive === 0) {
+        state.bombs--; state.bombActive = 200; playSE('dead'); updateHUD();
+    }
+});
+window.addEventListener('keyup', e => state.keys[e.code] = false);
+
+function togglePause() {
+    state.paused = !state.paused;
+    document.getElementById('pause-screen').style.display = state.paused ? 'flex' : 'none';
+    if(!state.paused && audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function loop() {
+    if(!state.paused) {
+        state.frame++;
+        update();
+        draw();
+    }
+    requestAnimationFrame(loop);
+}
+
+function update() {
+    const p = state.player;
+    const speed = state.keys['ShiftLeft'] ? p.speed / 2.2 : p.speed;
+    if(state.keys['ArrowUp'] && p.y > 20) p.y -= speed;
+    if(state.keys['ArrowDown'] && p.y < 780) p.y += speed;
+    if(state.keys['ArrowLeft'] && p.x > 20) p.x -= speed;
+    if(state.keys['ArrowRight'] && p.x < 580) p.x += speed;
+
+    if(state.keys['KeyZ'] && state.frame % 5 === 0) {
+        state.bullets.push({x: p.x, y: p.y - 15, vy: -12});
+        playSE('shoot');
+    }
+
+    if(state.bombActive > 0) {
+        state.bombActive--;
+        state.enemyBullets = [];
+        if(state.boss) state.boss.hp -= (state.stage * 10 + 100);
+    }
+
+    if(!state.boss) spawnBoss();
+    const b = state.boss;
+    if(b.y < b.targetY) b.y += 2;
+    b.x = 300 + Math.sin(state.frame * 0.02) * 120;
+
+    // Boss弾幕
+    const diff = state.stage > 25 ? 50 : 5 + Math.floor(state.stage * 1.5);
+    if(state.frame % Math.max(2, 12 - Math.floor(state.stage / 4)) === 0) {
+        for(let i=0; i<diff; i++) {
+            const angle = (state.frame * 0.08) + (i * Math.PI * 2 / diff);
+            state.enemyBullets.push({
+                x: b.x, y: b.y, vx: Math.cos(angle) * (2.5 + state.stage * 0.1), vy: Math.sin(angle) * (2.5 + state.stage * 0.1),
+                r: 4, col: b.isSpell ? '#f0f' : '#f00'
+            });
+        }
+    }
+    // 自機狙い弾
+    if(state.frame % 45 === 0) {
+        const ang = Math.atan2(p.y - b.y, p.x - b.x);
+        state.enemyBullets.push({x: b.x, y: b.y, vx: Math.cos(ang)*6, vy: Math.sin(ang)*6, r: 6, col:'#fff'});
+    }
+
+    // アイテム（残機増加）
+    if(state.frame % 800 === 0) {
+        state.items.push({x: Math.random()*560+20, y: -20, type: 'life'});
+    }
+
+    // 衝突判定
+    state.bullets = state.bullets.filter(bul => {
+        bul.y += bul.vy;
+        if(b && Math.hypot(bul.x-b.x, bul.y-b.y) < 40) { b.hp -= 20; return false; }
+        return bul.y > -20;
+    });
+
+    state.enemyBullets = state.enemyBullets.filter(eb => {
+        eb.x += eb.vx; eb.y += eb.vy;
+        if(state.bombActive === 0 && Math.hypot(p.x-eb.x, p.y-eb.y) < p.r + eb.r) {
+            playerHit(); return false;
+        }
+        return eb.y < 820 && eb.y > -20 && eb.x > -20 && eb.x < 620;
+    });
+
+    state.items = state.items.filter(it => {
+        it.y += 3;
+        if(Math.hypot(p.x-it.x, p.y-it.y) < 35) {
+            state.lives += 2; updateHUD(); return false;
+        }
+        return it.y < 820;
+    });
+
+    // ボス進行
+    if(b.hp <= 0) {
+        if(!b.isSpell) {
+            b.isSpell = true; b.hp = b.maxHp * 1.2;
+            document.getElementById('spell-name').innerText = "Spell Card: 境界の審判";
+            playSE('dead');
+        } else {
+            state.stage++; state.boss = null; state.bombs = 3;
+            document.getElementById('spell-name').innerText = "";
+            document.getElementById('boss-ui').style.display = 'none';
+            updateHUD();
+            if(state.stage > 26) { alert("ALL CLEAR! あなたは幻想郷の伝説となりました。"); location.reload(); }
+        }
+    }
+    document.getElementById('hp-bar-fill').style.width = (b.hp / (b.isSpell ? b.maxHp*1.2 : b.maxHp) * 100) + "%";
+}
+
+function playerHit() {
+    state.lives--; playSE('dead'); updateHUD();
+    state.player.x = 300; state.player.y = 700;
+    state.enemyBullets = [];
+    if(state.lives < 0) { alert("GAME OVER"); location.reload(); }
+}
+
+function draw() {
+    ctx.fillStyle = '#000210'; ctx.fillRect(0, 0, 600, 800);
+    // 背景の星
+    ctx.fillStyle = '#fff';
+    for(let i=0; i<30; i++) ctx.fillRect((i*137+state.frame)%600, (i*251+state.frame*2)%800, 1, 1);
+
+    if(state.bombActive > 0) {
+        ctx.strokeStyle = `rgba(255,255,255,${state.bombActive/200})`;
+        ctx.lineWidth = 15;
+        ctx.strokeRect(300-(200-state.bombActive)*3, 400-(200-state.bombActive)*4, (200-state.bombActive)*6, (200-state.bombActive)*8);
+    }
+
+    if(state.boss) {
+        ctx.fillStyle = '#f0f'; ctx.beginPath(); ctx.arc(state.boss.x, state.boss.y, 40, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+    }
+
+    // 自機
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(state.player.x, state.player.y, 10, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#f00'; ctx.beginPath(); ctx.arc(state.player.x, state.player.y, state.player.r, 0, Math.PI*2); ctx.fill();
+
+    ctx.fillStyle = '#0ff'; state.bullets.forEach(b => ctx.fillRect(b.x-2, b.y, 4, 15));
+    state.enemyBullets.forEach(eb => {
+        ctx.fillStyle = eb.col; ctx.beginPath(); ctx.arc(eb.x, eb.y, eb.r, 0, Math.PI*2); ctx.fill();
+    });
+
+    ctx.fillStyle = '#ff0'; state.items.forEach(it => {
+        ctx.font = '24px Arial'; ctx.fillText('★', it.x-10, it.y);
+    });
+}
+
+updateHUD();
+ctx.fillStyle = '#fff'; ctx.font = '24px Arial'; ctx.textAlign = 'center';
+ctx.fillText('CLICK TO START', 300, 400);
+window.addEventListener('mousedown', () => {
+    if(state.frame === 0) { audioCtx.resume(); loop(); }
+}, {once: true});
+</script>
+</body>
+</html>

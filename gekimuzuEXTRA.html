@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>幻想弾幕録 ～ HTML5 Ultra Lunatic</title>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'MS Gothic', sans-serif; }
+        #game-wrap { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; background: #000210; }
+        canvas { background: #000; box-shadow: 0 0 50px rgba(0,0,100,0.8); border: 2px solid #444; height: 100%; aspect-ratio: 3/4; }
+        #ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        #pause-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 100; }
+        .hud { position: absolute; color: #fff; text-shadow: 2px 2px #000; font-weight: bold; }
+        #lives { top: 20px; left: 20px; font-size: 32px; color: #ff66aa; letter-spacing: 5px; }
+        #bombs { top: 65px; left: 20px; font-size: 22px; color: #00ff00; }
+        #stage-info { top: 20px; right: 20px; font-size: 28px; color: #ff88ff; }
+        #boss-ui { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); width: 50%; display: none; }
+        #hp-bar-bg { width: 100%; height: 12px; border: 2px solid #fff; background: rgba(255,255,255,0.2); overflow: hidden; }
+        #hp-bar-fill { width: 100%; height: 100%; background: linear-gradient(90deg, #f00, #ff0, #f00); }
+        #spell-name { color: #0ff; font-style: italic; font-size: 18px; margin-top: 8px; text-align: center; text-transform: uppercase; letter-spacing: 2px; }
+    </style>
+</head>
+<body>
+
+<div id="game-wrap">
+    <canvas id="cvs" width="600" height="800"></canvas>
+    <div id="ui">
+        <div id="lives" class="hud"></div>
+        <div id="bombs" class="hud">BOMBS: ★★★</div>
+        <div id="stage-info" class="hud">Stage 1</div>
+        <div id="boss-ui">
+            <div id="hp-bar-bg"><div id="hp-bar-fill"></div></div>
+            <div id="spell-name"></div>
+        </div>
+    </div>
+    <div id="pause-screen">
+        <h1 style="color:#0ff; font-size:70px; margin-bottom:10px; text-shadow: 0 0 20px #0ff;">PAUSE</h1>
+        <p style="color:#fff; font-size:28px;">[Z] or [Enter] to Resume</p>
+    </div>
+</div>
+
+<script>
+/** * AUDIO ENGINE - ZUN調シンセサイザー
+ */
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playZunPet(freq, time, dur, vol = 0.1) {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    const lfo = audioCtx.createOscillator();
+    const lfoGain = audioCtx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(freq, time);
+    lfo.frequency.value = 7.5; 
+    lfoGain.gain.value = freq * 0.04; // 独特なビブラートの深さ
+    lfo.connect(lfoGain); lfoGain.connect(osc.frequency);
+    gain.gain.setValueAtTime(0, time);
+    gain.gain.linearRampToValueAtTime(vol, time + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    lfo.start(time); osc.start(time);
+    lfo.stop(time + dur);
+}
+
+function playSE(type) {
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    if(type === 'shoot') {
+        osc.frequency.setValueAtTime(900, now);
+        osc.frequency.exponentialRampToValueAtTime(150, now + 0.08);
+        g.gain.setValueAtTime(0.04, now);
+    } else if(type === 'dead') {
+        osc.type = 'square'; osc.frequency.value = 120;
+        g.gain.setValueAtTime(0.4, now); g.gain.linearRampToValueAtTime(0, now + 0.5);
+    }
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(); osc.stop(now + 0.5);
+}
+
+let bgmInterval;
+function startBGM(stage) {
+    if(bgmInterval) clearInterval(bgmInterval);
+    const isEx = stage > 30;
+    const tempo = isEx ? 180 : 130 + (stage * 1.5);
+    const scale = isEx ? [0, 1, 3, 4, 6, 7, 9] : [0, 2, 3, 5, 7, 8, 10]; 
+    let step = 0;
+    bgmInterval = setInterval(() => {
+        if(state.paused) return;
+        const now = audioCtx.currentTime;
+        if(step % 2 === 0) {
+            const note = scale[Math.floor(Math.random() * scale.length)];
+            const freq = 220 * Math.pow(2, (note + (isEx ? 12 : 0)) / 12);
+            playZunPet(freq, now, 0.35, 0.06);
+        }
+        step++;
+    }, 60000 / tempo / 2);
+}
+
+/**
+ * GAME CORE
+ */
+const cvs = document.getElementById('cvs');
+const ctx = cvs.getContext('2d');
+const state = {
+    stage: 1, lives: 3, bombs: 3, bombActive: 0, paused: false,
+    frame: 0, player: { x: 300, y: 700, r: 2, speed: 5 },
+    bullets: [], enemyBullets: [], mobs: [], items: [],
+    boss: null, keys: {}
+};
+
+function updateHUD() {
+    document.getElementById('lives').innerText = "★".repeat(Math.max(0, Math.floor(state.lives)));
+    document.getElementById('bombs').innerText = "BOMBS: " + "★".repeat(state.bombs);
+    const isEx = state.stage > 30;
+    document.getElementById('stage-info').innerText = isEx ? "Stage EXTRA" : `Stage ${state.stage}`;
+    if(isEx) document.getElementById('stage-info').style.color = "#ff0000";
+}
+
+function spawnBoss() {
+    const isEx = state.stage > 30;
+    state.boss = {
+        x: 300, y: -100, targetY: 150,
+        hp: isEx ? 250000 : 15000 + (Math.pow(state.stage, 2.2) * 200),
+        maxHp: isEx ? 250000 : 15000 + (Math.pow(state.stage, 2.2) * 200),
+        isSpell: false
+    };
+    document.getElementById('boss-ui').style.display = 'block';
+    startBGM(state.stage);
+    updateHUD();
+}
+
+window.addEventListener('keydown', e => {
+    state.keys[e.code] = true;
+    if(e.code === 'Escape') togglePause();
+    if(state.paused && (e.code === 'KeyZ' || e.code === 'Enter')) togglePause();
+    if(!state.paused && e.code === 'KeyX' && state.bombs > 0 && state.bombActive === 0) {
+        state.bombs--; state.bombActive = 240; playSE('dead'); updateHUD();
+    }
+});
+window.addEventListener('keyup', e => state.keys[e.code] = false);
+
+function togglePause() {
+    state.paused = !state.paused;
+    document.getElementById('pause-screen').style.display = state.paused ? 'flex' : 'none';
+}
+
+function loop() {
+    if(!state.paused) {
+        state.frame++;
+        update();
+        draw();
+    }
+    requestAnimationFrame(loop);
+}
+
+function update() {
+    const p = state.player;
+    const speed = state.keys['ShiftLeft'] ? p.speed / 2.5 : p.speed;
+    if(state.keys['ArrowUp'] && p.y > 20) p.y -= speed;
+    if(state.keys['ArrowDown'] && p.y < 780) p.y += speed;
+    if(state.keys['ArrowLeft'] && p.x > 20) p.x -= speed;
+    if(state.keys['ArrowRight'] && p.x < 580) p.x += speed;
+
+    if(state.keys['KeyZ'] && state.frame % 4 === 0) {
+        state.bullets.push({x: p.x, y: p.y - 20, vy: -18});
+        playSE('shoot');
+    }
+
+    if(state.bombActive > 0) {
+        state.bombActive--;
+        state.enemyBullets = [];
+        if(state.boss) state.boss.hp -= (state.stage * 40 + 500);
+    }
+
+    if(!state.boss) spawnBoss();
+    const b = state.boss;
+    if(b.y < b.targetY) b.y += 2;
+    b.x = 300 + Math.sin(state.frame * 0.03) * 180;
+
+    // Boss弾幕生成 (ステージ30に向かって指数関数的に増加)
+    const diffCoeff = Math.pow(state.stage, 1.5) / 5;
+    const bulletCount = state.stage > 30 ? 80 : 8 + Math.floor(diffCoeff * 4);
+    if(state.frame % Math.max(1, 8 - Math.floor(state.stage / 5)) === 0) {
+        for(let i=0; i<bulletCount; i++) {
+            const angle = (state.frame * 0.08) + (i * Math.PI * 2 / bulletCount);
+            state.enemyBullets.push({
+                x: b.x, y: b.y, vx: Math.cos(angle) * (3 + state.stage * 0.2), vy: Math.sin(angle) * (3 + state.stage * 0.2),
+                r: 4, col: b.isSpell ? '#f0f' : '#f00'
+            });
+        }
+    }
+    // 自機狙い弾
+    if(state.frame % 25 === 0) {
+        const ang = Math.atan2(p.y - b.y, p.x - b.x);
+        for(let j=-1; j<=1; j++){
+            state.enemyBullets.push({x: b.x, y: b.y, vx: Math.cos(ang+j*0.1)*8, vy: Math.sin(ang+j*0.1)*8, r: 6, col:'#fff'});
+        }
+    }
+
+    // 小さな敵(Mobs) 波状攻撃
+    if(state.frame % 25 === 0) { // かなり頻繁
+        state.mobs.push({x: Math.random()*600, y: -50, hp: 30 + state.stage*20, t: 0, amp: Math.random()*150 + 50});
+    }
+    state.mobs.forEach((m, i) => {
+        m.t += 0.05; m.y += 4.5; m.x += Math.sin(m.t)*10;
+        // 雑魚の強烈な弾幕
+        if(state.frame % 15 === 0) {
+            const ang = Math.atan2(p.y-m.y, p.x-m.x);
+            for(let k=0; k<3; k++) {
+                state.enemyBullets.push({x: m.x, y: m.y, vx: Math.cos(ang+(k-1)*0.2)*5, vy: Math.sin(ang+(k-1)*0.2)*5, r: 3, col:'#5f5'});
+            }
+        }
+        if(m.y > 850) state.mobs.splice(i, 1);
+        if(Math.hypot(p.x-m.x, p.y-m.y) < 35) playerHit();
+    });
+
+    // 衝突判定
+    state.bullets = state.bullets.filter(bul => {
+        bul.y += bul.vy;
+        if(b && Math.hypot(bul.x-b.x, bul.y-b.y) < 45) { b.hp -= 25; return false; }
+        state.mobs.forEach((m, mi) => {
+            if(Math.hypot(bul.x-m.x, bul.y-m.y) < 35) {
+                m.hp -= 30; if(m.hp <= 0) {
+                    state.mobs.splice(mi, 1);
+                    state.items.push({x: m.x, y: m.y}); // アイテム
+                }
+                return false;
+            }
+        });
+        return bul.y > -20;
+    });
+
+    state.enemyBullets = state.enemyBullets.filter(eb => {
+        eb.x += eb.vx; eb.y += eb.vy;
+        if(state.bombActive === 0 && Math.hypot(p.x-eb.x, p.y-eb.y) < p.r + eb.r) {
+            playerHit(); return false;
+        }
+        return eb.y < 820 && eb.y > -20 && eb.x > -20 && eb.x < 620;
+    });
+
+    state.items = state.items.filter(it => {
+        it.y += 5;
+        if(Math.hypot(p.x-it.x, p.y-it.y) < 50) {
+            state.lives += 0.5; // 半分復活
+            updateHUD(); return false;
+        }
+        return it.y < 820;
+    });
+
+    // ボス進行
+    if(b.hp <= 0) {
+        if(!b.isSpell) {
+            b.isSpell = true; b.hp = b.maxHp * 2.0;
+            document.getElementById('spell-name').innerText = "Spell Card: 禁忌「全画面殺戮弾幕」";
+            playSE('dead');
+        } else {
+            state.stage++; state.boss = null; state.bombs = 3;
+            document.getElementById('spell-name').innerText = "";
+            document.getElementById('boss-ui').style.display = 'none';
+            updateHUD();
+            if(state.stage > 31) { alert("CONGRATULATIONS! あなたは神を超えました。"); location.reload(); }
+        }
+    }
+    document.getElementById('hp-bar-fill').style.width = (b.hp / (b.isSpell ? b.maxHp*2.0 : b.maxHp) * 100) + "%";
+}
+
+function playerHit() {
+    state.lives -= 1; playSE('dead'); updateHUD();
+    state.player.x = 300; state.player.y = 700;
+    state.enemyBullets = [];
+    if(state.lives < 0) { alert("幻想郷の藻屑となりました。"); location.reload(); }
+}
+
+function draw() {
+    ctx.fillStyle = '#000210'; ctx.fillRect(0, 0, 600, 800);
+    // 魔法陣背景
+    ctx.strokeStyle = 'rgba(100,0,255,0.2)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(300, 400, 200 + Math.sin(state.frame*0.05)*20, 0, Math.PI*2); ctx.stroke();
+    
+    if(state.bombActive > 0) {
+        ctx.strokeStyle = `rgba(255,255,255,${state.bombActive/240})`;
+        ctx.lineWidth = 20;
+        ctx.strokeRect(300-(240-state.bombActive)*4, 400-(240-state.bombActive)*5, (240-state.bombActive)*8, (240-state.bombActive)*10);
+    }
+
+    state.mobs.forEach(m => {
+        ctx.fillStyle = '#5f5'; ctx.beginPath(); ctx.moveTo(m.x, m.y-18); ctx.lineTo(m.x-18, m.y+18); ctx.lineTo(m.x+18, m.y+18); ctx.fill();
+    });
+
+    if(state.boss) {
+        ctx.fillStyle = '#f0f'; ctx.beginPath(); ctx.arc(state.boss.x, state.boss.y, 45, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.stroke();
+    }
+
+    // 自機
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(state.player.x, state.player.y, 12, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#f00'; ctx.beginPath(); ctx.arc(state.player.x, state.player.y, state.player.r, 0, Math.PI*2); ctx.fill();
+
+    ctx.fillStyle = '#0ff'; state.bullets.forEach(b => ctx.fillRect(b.x-2, b.y, 4, 18));
+    state.enemyBullets.forEach(eb => {
+        ctx.fillStyle = eb.col; ctx.beginPath(); ctx.arc(eb.x, eb.y, eb.r, 0, Math.PI*2); ctx.fill();
+    });
+
+    ctx.fillStyle = '#ff0'; state.items.forEach(it => {
+        ctx.font = '32px Arial'; ctx.fillText('★', it.x-16, it.y);
+    });
+}
+
+// 起動
+updateHUD();
+ctx.fillStyle = '#fff'; ctx.font = '30px Arial'; ctx.textAlign = 'center';
+ctx.fillText('CLICK TO START LUNATIC', 300, 400);
+window.addEventListener('mousedown', () => {
+    if(state.frame === 0) { audioCtx.resume(); loop(); }
+}, {once: true});
+</script>
+</body>
+</html>
