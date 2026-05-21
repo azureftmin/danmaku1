@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>弾幕STG - Last Shoot Edition</title>
+    <style>
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background-color: #000; color: #fff;
+            font-family: 'MS Mincho', 'Courier New', serif;
+            overflow: hidden;
+            display: flex; justify-content: center; align-items: center;
+        }
+        /* 画面サイズに合わせて全画面に収まるコンテナ */
+        #game-container {
+            position: relative;
+            width: 100vw; height: 100vh;
+            max-width: 1024px; max-height: 768px;
+            aspect-ratio: 4 / 3;
+            background-color: #03040f;
+            border: 3px solid #283966;
+            display: flex; box-sizing: border-box;
+            box-shadow: 0 0 50px rgba(0, 120, 255, 0.35);
+        }
+        canvas {
+            background-color: #000002;
+            width: 72%; height: 100%;
+        }
+        #sidebar {
+            width: 28%; height: 100%;
+            background: linear-gradient(180deg, #0b1126 0%, #010105 100%);
+            padding: 25px 15px; box-sizing: border-box;
+            border-left: 3px solid #283966;
+            display: flex; flex-direction: column; gap: 16px;
+            overflow-y: auto;
+        }
+        .info-label { font-size: 13px; color: #91b5ff; font-weight: bold; text-shadow: 1px 1px 2px #000; letter-spacing: 1px;}
+        .info-value { font-size: 22px; font-weight: bold; font-family: 'Courier New', monospace; color: #fff; text-shadow: 0 0 5px rgba(0,180,255,0.6); }
+        #sc-status { color: #ff3399; font-size: 14px; font-weight: bold; min-height: 65px; text-shadow: 0 0 8px rgba(255,20,120,0.7); line-height: 1.4; }
+        
+        .config-panel {
+            background: rgba(0, 8, 24, 0.75);
+            border: 1px solid #283966;
+            border-radius: 5px;
+            padding: 10px;
+            font-size: 11px;
+            margin-top: auto;
+        }
+        .config-title { color: #33ffff; font-weight: bold; margin-bottom: 6px; text-align: center; }
+        .config-row { display: flex; justify-content: space-between; margin: 5px 0; align-items: center; }
+        .config-btn { background: #0c183b; border: 1px solid #234799; color: #fff; padding: 3px 8px; cursor: pointer; border-radius: 3px; font-size: 11px; min-width: 70px; text-align: center;}
+        .config-btn.waiting { background: #ff1a75; border-color: #ff75a3; animation: blink 0.4s infinite alternate; }
+        
+        /* メニュー画面(ポーズ、ゲームオーバー、クリア共通) */
+        #menu-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 72%; height: 100%;
+            background: rgba(1, 2, 8, 0.92);
+            display: none; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 10;
+        }
+        .menu-title { font-size: 40px; color: #00ccff; margin-bottom: 35px; font-weight: bold; letter-spacing: 5px; text-shadow: 0 0 15px #00ccff; }
+        .menu-item { font-size: 20px; color: #777; border: 2px solid transparent; padding: 10px 35px; border-radius: 4px; margin: 10px 0; cursor: pointer; transition: 0.15s; }
+        .menu-item.selected { color: #fff; border-color: #00aaff; background: rgba(0,170,255,0.22); text-shadow: 0 0 10px #fff; }
+        @keyframes blink { from { opacity: 1; } to { opacity: 0.3; } }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas" width="560" height="600"></canvas>
+    
+    <!-- メニュー画面 -->
+    <div id="menu-overlay">
+        <div class="menu-title" id="overlay-title">PAUSE</div>
+        <div class="menu-item selected" id="menu-opt-0">再開 (Z / ENTER)</div>
+        <div class="menu-item" id="menu-opt-1">最初からやりなおす</div>
+    </div>
+
+    <!-- サイドステータスパネル -->
+    <div id="sidebar">
+        <div>
+            <div class="info-label">STAGE</div>
+            <div id="stage-display" class="info-value" style="color: #4da6ff;">STAGE 1</div>
+        </div>
+        <hr style="border:1px solid #283966; margin: 2px 0;">
+        <div>
+            <div class="info-label">Score</div>
+            <div id="score" class="info-value" style="color: #ffff4d;">000000000</div>
+        </div>
+        <div>
+            <div class="info-label">Power</div>
+            <div id="power" class="info-value" style="color: #ff4d4d;">0.00 / 4.00</div>
+        </div>
+        <div>
+            <div class="info-label">Boss HP</div>
+            <div id="enemy-hp-text" class="info-value" style="color: #ff3355;">----</div>
+        </div>
+        <div id="sc-status">星々が流れる虚空</div>
+
+        <!-- コントローラー設定 -->
+        <div class="config-panel">
+            <div class="config-title">🎮 コントローラー設定</div>
+            <div id="pad-info" style="color:#2de3b1; font-size:11px; text-align:center; margin-bottom:6px;">未接続 (ボタンを押して認識)</div>
+            <div class="config-row">
+                <span>ショット / 決定</span>
+                <div class="config-btn" id="cfg-shot" onclick="startConfig('shot')">Button 0</div>
+            </div>
+            <div class="config-row">
+                <span>ボム (BOMB)</span>
+                <div class="config-btn" id="cfg-bomb" onclick="startConfig('bomb')">Button 1</div>
+            </div>
+            <div class="config-row">
+                <span>低速移動 (FOCUS)</span>
+                <div class="config-btn" id="cfg-slow" onclick="startConfig('slow')">Button 4</div>
+            </div>
+            <div class="config-row">
+                <span>ポーズ (PAUSE)</span>
+                <div class="config-btn" id="cfg-pause" onclick="startConfig('pause')">Button 9</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// --- WebAudio API 「ZUN調」再現シンセ音源 ---
+const AudioContext = window.AudioContext || window.webkitAudioContext;
+let audioCtx = null;
+let bgmInterval = null;
+
+function initAudio() { if (!audioCtx) audioCtx = new AudioContext(); }
+
+function playSE(type) {
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    if (type === 'shot') {
+        let osc = audioCtx.createOscillator(); let gain = audioCtx.createGain();
+        osc.type = 'triangle'; osc.frequency.setValueAtTime(600, now);
+        osc.frequency.exponentialRampToValueAtTime(180, now + 0.04);
+        gain.gain.setValueAtTime(0.03, now); gain.gain.linearRampToValueAtTime(0, now + 0.04);
+        osc.connect(gain); gain.connect(audioCtx.destination); osc.start(now); osc.stop(now + 0.04);
+    } else if (type === 'pichun') {
+        let osc = audioCtx.createOscillator(); let gain = audioCtx.createGain();
+        osc.type = 'sawtooth'; osc.frequency.setValueAtTime(850, now);
+        osc.frequency.linearRampToValueAtTime(50, now + 0.55);
+        gain.gain.setValueAtTime(0.25, now); gain.gain.linearRampToValueAtTime(0, now + 0.55);
+        osc.connect(gain); gain.connect(audioCtx.destination); osc.start(now); osc.stop(now + 0.55);
+    } else if (type === 'bomb') {
+        let osc = audioCtx.createOscillator(); let gain = audioCtx.createGain();
+        osc.type = 'sawtooth'; osc.frequency.setValueAtTime(90, now);
+        osc.frequency.exponentialRampToValueAtTime(2800, now + 2.2);
+        gain.gain.setValueAtTime(0.28, now); gain.gain.linearRampToValueAtTime(0, now + 2.2);
+        osc.connect(gain); gain.connect(audioCtx.destination); osc.start(now); osc.stop(now + 2.2);
+    }
+}
+
+// 状況に応じたZUN調変拍子・マイナー和音BGMの生成
+function startBGM(trackId) {
+    if (!audioCtx) return;
+    if (bgmInterval) clearInterval(bgmInterval);
+    let step = 0;
+    // 哀愁を誘う短音階 (ZUNスケール)
+    let scale = [220.00, 246.94, 261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25, 587.33, 659.25];
+    let melody = []; let tempo = 115; 
+    let oscType = 'sawtooth'; // 鋭いトランペット/リードブレード風
+
+    if (trackId === 1) { // 通常: 疾走感のある神秘的な道中
+        melody = [0, 2, 4, 3, 5, 4, 7, 5, 4, 3, 2, 3, 1, 2, 0, 0];
+    } else if (trackId === 2) { // スペカ1: 軽快ながら不穏な第1スペカ
+        melody = [2, 5, 4, 7, 6, 9, 7, 11, 9, 7, 5, 4, 3, 4, 2, 2]; tempo = 105;
+    } else if (trackId === 3) { // スペカ2: 地霊殿を想起させる緊迫ベースライン
+        melody = [4, 7, 5, 8, 7, 10, 8, 11, 9, 8, 6, 5, 4, 5, 3, 3]; tempo = 95;
+    } else if (trackId === 4) { // スペカ3: 宇宙的な広がりと焦燥のメロディ
+        melody = [7, 6, 4, 5, 7, 9, 10, 9, 7, 5, 4, 2, 3, 5, 2, 0]; tempo = 90;
+    } else if (trackId === 5) { // Last Shoot: 狂気的難易度に合わせた激烈なシンセドラム進行
+        melody = [0, 11, 2, 9, 4, 7, 5, 6, 3, 8, 1, 10, 2, 7, 0, 5]; tempo = 70; oscType = 'square';
+    }
+
+    bgmInterval = setInterval(() => {
+        let now = audioCtx.currentTime;
+        let note = melody[step % melody.length];
+        let freq = scale[note % scale.length];
+        
+        // 主旋律
+        let osc = audioCtx.createOscillator(); let gain = audioCtx.createGain();
+        osc.type = oscType; osc.frequency.setValueAtTime(freq, now);
+        gain.gain.setValueAtTime(0.04, now);
+        gain.gain.linearRampToValueAtTime(0, now + (tempo/1000)*0.85);
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.start(now); osc.stop(now + tempo/1000);
+
+        // 伴奏ベース (裏打ち)
+        if (step % 2 === 0) {
+            let bOsc = audioCtx.createOscillator(); let bGain = audioCtx.createGain();
+            bOsc.type = 'triangle'; bOsc.frequency.setValueAtTime(freq / 2, now);
+            bGain.gain.setValueAtTime(0.05, now);
+            bGain.gain.linearRampToValueAtTime(0, now + (tempo/1000)*1.4);
+            bOsc.connect(bGain); bGain.connect(audioCtx.destination);
+            bOsc.start(now); bOsc.stop(now + tempo/1000*2);
+        }
+        step++;
+    }, tempo);
+}
+
+// --- ゲームコア構造 ---
+const canvas = document.getElementById('gameCanvas'); const ctx = canvas.getContext('2d');
+let gameActive = true; let isPaused = false; let menuMode = "pause"; 
+let menuSelectedIndex = 0;
+
+let score, power, lives, bombsLeft, bombUsedCount, gameTick, currentStage, currentSC, isPhantasmEligible;
+let player, boss, playerBullets, enemyBullets, enemies, items, activeBomb;
+
+// ゲームパッド割り当て
+let padMapping = { shot: 0, bomb: 1, slow: 4, pause: 9 };
+let configTarget = null; let padIdx = null; let padPausedState = false; let padMenuMoved = false;
+const keys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false, z: false, x: false, Shift: false };
+
+// 幾何学的・抽象的な高速回転星空背景
+let starNodes = [];
+function initStars() {
+    starNodes = [];
+    for(let i = 0; i < 140; i++) {
+        starNodes.push({
+            angle: Math.random() * Math.PI * 2,
+            radius: Math.random() * 450,
+            speed: Math.random() * 3.5 + 2.5,
+            size: Math.random() * 2 + 1,
+            color: Math.random() > 0.4 ? '#4da6ff' : '#ff79c6'
+        });
+    }
+}
+
+// 初期化（やりなおす機能でいつでもコール可能）
+function initGame() {
+    score = 0; power = 0.00; lives = 3; bombsLeft = 3; bombUsedCount = 0; gameTick = 0;
+    currentStage = 1; currentSC = 0; isPhantasmEligible = true;
+    
+    player = { x: 280, y: 520, radius: 2, speed: 4.8, slowSpeed: 2.0, invincible: 0 };
+    boss = { x: 280, y: -120, targetY: 130, hp: 80, maxHp: 80, radius: 26, active: false };
+    
+    playerBullets = []; enemyBullets = []; enemies = []; items = [];
+    activeBomb = { active: false, timer: 0, powerLevel: 1 };
+    
+    gameActive = true; isPaused = false;
+    document.getElementById('menu-overlay').style.display = 'none';
+    document.getElementById('stage-display').innerText = "STAGE 1";
+    document.getElementById('sc-status').innerText = "星の海へ突入";
+    
+    initStars();
+    startBGM(1);
+}
+
+// ゲームパッド接続監視
+window.addEventListener("gamepadconnected", (e) => {
+    padIdx = e.gamepad.index;
+    document.getElementById('pad-info').innerText = `接続: ${e.gamepad.id.slice(0,12)}...`;
+});
+window.addEventListener("gamepaddisconnected", () => {
+    padIdx = null;
+    document.getElementById('pad-info').innerText = "未接続 (ボタンを押して認識)";
+});
+
+// キーイベント
+window.addEventListener('keydown', e => {
+    initAudio();
+    if (e.key === 'Escape') {
+        if (gameActive) { togglePause(); }
+        return;
+    }
+    // メニュー表示中の制御
+    if (isPaused || !gameActive) {
+        if (e.key === 'ArrowUp') { menuSelectedIndex = 0; updateMenuDOM(); }
+        if (e.key === 'ArrowDown') { menuSelectedIndex = 1; updateMenuDOM(); }
+        if (e.key === 'z' || e.key === 'Enter') { executeMenuOption(); }
+        return;
+    }
+    if (e.key in keys) keys[e.key] = true;
+});
+window.addEventListener('keyup', e => { if (e.key in keys) keys[e.key] = false; });
+
+function togglePause() {
+    isPaused = !isPaused;
+    if (isPaused) {
+        menuMode = "pause";
+        document.getElementById('overlay-title').innerText = "PAUSE";
+        document.getElementById('menu-opt-0').innerText = "再開 (Z / ENTER)";
+        document.getElementById('menu-opt-0').style.display = "block";
+        menuSelectedIndex = 0;
+        updateMenuDOM();
+        document.getElementById('menu-overlay').style.display = 'flex';
+    } else {
+        document.getElementById('menu-overlay').style.display = 'none';
+    }
+}
+
+function triggerGameOverMenu() {
+    menuMode = "gameover";
+    document.getElementById('overlay-title').innerText = "GAME OVER";
+    document.getElementById('menu-opt-0').style.display = "none";
+    menuSelectedIndex = 1;
+    updateMenuDOM();
+    document.getElementById('menu-overlay').style.display = 'flex';
+}
+
+function triggerClearMenu() {
+    menuMode = "clear";
+    document.getElementById('overlay-title').innerText = "ALL CLEAR!";
+    document.getElementById('menu-opt-0').style.display = "none";
+    menuSelectedIndex = 1;
+    updateMenuDOM();
+    document.getElementById('menu-overlay').style.display = 'flex';
+}
+
+function updateMenuDOM() {
+    document.getElementById('menu-opt-0').classList.remove('selected');
+    document.getElementById('menu-opt-1').classList.remove('selected');
+    document.getElementById(`menu-opt-${menuSelectedIndex}`).classList.add('selected');
+}
+
+function executeMenuOption() {
+    if (menuSelectedIndex === 0 && menuMode === "pause") {
+        togglePause();
+    } else if (menuSelectedIndex === 1) {
+        initGame();
+    }
+}
+
+function startConfig(action) {
+    if (padIdx === null) { alert("コントローラーのキー入力を検知できません。ボタンをどれか一度押してください。"); return; }
+    configTarget = action;
+    const btn = document.getElementById(`cfg-${action}`);
+    btn.innerText = "入力待ち...";
+    btn.classList.add('waiting');
+}
+
+function pollGamepad() {
+    if (padIdx === null) return;
+    const gp = navigator.getGamepads()[padIdx];
+    if (!gp) return;
+
+    if (configTarget) {
+        for (let i = 0; i < gp.buttons.length; i++) {
+            if (gp.buttons[i].pressed) {
+                padMapping[configTarget] = i;
+                document.getElementById(`cfg-${configTarget}`).innerText = `Button ${i}`;
+                document.getElementById(`cfg-${configTarget}`).classList.remove('waiting');
+                configTarget = null;
+                break;
+            }
+        }
+        return;
+    }
+
+    if (isPaused || !gameActive) {
+        const threshold = 0.5;
+        if (gp.axes[1] < -threshold || gp.buttons[12]?.pressed) {
+            if (!padMenuMoved && menuMode === "pause") { menuSelectedIndex = 0; updateMenuDOM(); padMenuMoved = true; }
+        } else if (gp.axes[1] > threshold || gp.buttons[13]?.pressed) {
+            if (!padMenuMoved) { menuSelectedIndex = 1; updateMenuDOM(); padMenuMoved = true; }
+        } else {
+            padMenuMoved = false;
+        }
+
+        if (gp.buttons[padMapping.shot]?.pressed) {
+            if (!padPausedState) { executeMenuOption(); padPausedState = true; }
+        } else if (gp.buttons[padMapping.pause]?.pressed) {
+            if (!padPausedState && menuMode === "pause") { togglePause(); padPausedState = true; }
+        } else {
+            padPausedState = false;
+        }
+        return;
+    }
+
+    const stickLimit = 0.3;
+    keys.ArrowLeft = gp.axes[0] < -stickLimit || (gp.buttons[14]?.pressed);
+    keys.ArrowRight = gp.axes[0] > stickLimit || (gp.buttons[15]?.pressed);
+    keys.ArrowUp = gp.axes[1] < -stickLimit || (gp.buttons[12]?.pressed);
+    keys.ArrowDown = gp.axes[1] > stickLimit || (gp.buttons[13]?.pressed);
+
+    keys.z = gp.buttons[padMapping.shot]?.pressed;
+    keys.x = gp.buttons[padMapping.bomb]?.pressed;
+    keys.Shift = gp.buttons[padMapping.slow]?.pressed;
+
+    if (gp.buttons[padMapping.pause]?.pressed) {
+        if (!padPausedState) { togglePause(); padPausedState = true; }
+    } else {
+        padPausedState = false;
+    }
+}
+
+// 小さなザコ敵を波状（サイン波）に上から下に移動させる
+function spawnEnemy() {
+    if (gameTick % 55 === 0 && !boss.active) {
+        enemies.push({ 
+            x: Math.random() * 400 + 80, y: -30, 
+            startX: Math.random() * 300 + 100, 
+            waveAmp: 90, waveSpeed: 0.035, 
+            tick: 0, hp: 3, radius: 13 
+        });
+    }
+}
+
+function spawnItem(x, y, type) { items.push({ x: x, y: y, type: type, vy: 1.9 }); }
+
+function startBossBattle() {
+    boss.active = true; boss.hp = 80; boss.maxHp = 80; boss.y = -60; currentSC = 0;
+    document.getElementById('sc-status').innerText = "通常攻撃\n(1ステージ目：難易度大幅低下状態)";
+    startBGM(1);
+}
+
+// ボスゲージ消滅に伴うスペルカード自動展開システム
+function checkBossState() {
+    if (boss.hp <= 0) {
+        enemyBullets.forEach(b => { spawnItem(b.x, b.y, Math.random() > 0.5 ? 'score' : 'power'); });
+        enemyBullets = [];
+
+        if (currentStage === 1) {
+            if (currentSC < 3) {
+                currentSC++;
+                boss.maxHp = 90 + currentSC * 45; boss.hp = boss.maxHp;
+                document.getElementById('sc-status').innerText = `神符「ルナティック・スピン 第${currentSC}波」\n(段階ごとに弾幕複雑度が少しずつ上昇！)`;
+                startBGM(currentSC + 1);
+            } else {
+                boss.active = false;
+                // Last Shoot 出現条件チェック (ノーミス、ノーボムクリア)
+                if (isPhantasmEligible) {
+                    currentStage = 2;
+                    document.getElementById('stage-display').innerText = "???";
+                    document.getElementById('sc-status').innerText = "空間深度臨界へ到達...";
+                    setTimeout(() => {
+                        document.getElementById('stage-display').innerText = "Last Shoot";
+                        document.getElementById('sc-status').innerText = "最終裏ステージ「Last Shoot」\n極限難易度通常弾幕（スペカなし）";
+                        startBossBattle(); boss.hp = 280; boss.maxHp = 280; startBGM(5);
+                    }, 2000);
+                } else {
+                    document.getElementById('sc-status').innerText = "STAGE 1 CLEAR!\n(ノーミスクリア未達成のため終了します)"; 
+                    gameActive = false; triggerClearMenu();
+                }
+            }
+        } else {
+            document.getElementById('sc-status').innerText = "Last Shoot CLEAR!!\n完全無欠の境界を超えし者"; 
+            gameActive = false; triggerClearMenu();
+        }
+    }
+}
+
+// ボム発動（数秒間ボスゲージ自動減少効果付き）
+function triggerBomb() {
+    if (bombsLeft > 0 && !activeBomb.active) {
+        bombsLeft--; bombUsedCount++;
+        isPhantasmEligible = false; // 出現条件が潰れる
+        activeBomb.active = true; 
+        activeBomb.timer = 180; 
+        activeBomb.powerLevel = currentSC + 1.8; // レベルに合わせて多めに減る
+        playSE('bomb');
+    }
+}
+
+function update() {
+    pollGamepad();
+    if (isPaused || !gameActive) return;
+    gameTick++;
+    if (player.invincible > 0) player.invincible--;
+
+    // 抽象的な螺旋の星空背景アニメーションの加速
+    let bSpeed = (currentStage === 2) ? 3.8 : 1.0;
+    starNodes.forEach(star => {
+        star.radius -= star.speed * bSpeed;
+        star.angle += 0.012 * bSpeed;
+        if (star.radius <= 6) {
+            star.radius = Math.random() * 320 + 200;
+            star.angle = Math.random() * Math.PI * 2;
+        }
+    });
+
+    let currentSpeed = keys.Shift ? player.slowSpeed : player.speed;
+    if (keys.ArrowUp) player.y -= currentSpeed; if (keys.ArrowDown) player.y += currentSpeed;
+    if (keys.ArrowLeft) player.x -= currentSpeed; if (keys.ArrowRight) player.x += currentSpeed;
+    player.x = Math.max(12, Math.min(548, player.x)); player.y = Math.max(12, Math.min(588, player.y));
+
+    if (keys.z && gameTick % 5 === 0) {
+        playSE('shot');
+        playerBullets.push({ x: player.x, y: player.y - 16, vy: -15 });
+        if (power >= 1.00) {
+            playerBullets.push({ x: player.x - 16, y: player.y - 4, vy: -14, vx: -0.6 });
+            playerBullets.push({ x: player.x + 16, y: player.y - 4, vy: -14, vx: 0.6 });
+        }
+    }
+
+    if (keys.x) triggerBomb();
+
+    // ボムの効果（敵弾消去＋ボスゲージ自動減少）
+    if (activeBomb.active) {
+        activeBomb.timer--;
+        enemyBullets = []; 
+        if (boss.active && gameTick % 2 === 0) {
+            boss.hp -= (0.55 * activeBomb.powerLevel); 
+        }
+        if (activeBomb.timer <= 0) activeBomb.active = false;
+    }
+
+    playerBullets.forEach((pb, pIdx) => {
+        pb.x += (pb.vx || 0); pb.y += pb.vy;
+        if (pb.y < -15) playerBullets.splice(pIdx, 1);
+        
+        // ボスに弾を当てた時
+        if (boss.active && Math.hypot(pb.x - boss.x, pb.y - boss.y) < boss.radius) {
+            boss.hp -= (1.0 + power * 0.1);
+            score += 10;
+            if (Math.random() < 0.06) spawnItem(Math.random() * 500 + 30, -10, Math.random() > 0.4 ? 'score' : 'power');
+            playerBullets.splice(pIdx, 1);
+        }
+        
+        // ザコを攻撃した時
+        enemies.forEach((en, eIdx) => {
+            if (Math.hypot(pb.x - en.x, pb.y - en.y) < en.radius) {
+                en.hp--; playerBullets.splice(pIdx, 1);
+                if (en.hp <= 0) {
+                    // やられたら周辺に残機復活の小さな星形アイテムを出す
+                    spawnItem(en.x, en.y, 'extend');
+                    enemies.splice(eIdx, 1);
+                }
+            }
+        });
+    });
+
+    // ザコ敵の波状攻撃処理
+    spawnEnemy();
+    enemies.forEach((en, eIdx) => {
+        en.tick++;
+        en.y += 1.5;
+        en.x = en.startX + Math.sin(en.tick * en.waveSpeed) * en.waveAmp;
+        if (en.y > 620) enemies.splice(eIdx, 1);
+        
+        // 小さなザコ敵は、そのステージの弾幕よりも「少し多め」にばら撒く
+        if (en.tick % 16 === 0) {
+            let aimAngle = Math.atan2(player.y - en.y, player.x - en.x);
+            for (let i = -2; i <= 2; i++) {
+                enemyBullets.push({ x: en.x, y: en.y, speed: 2.6, angle: aimAngle + i * 0.28, color: '#2df5b4', r: 4 });
+            }
+        }
+        if (Math.hypot(player.x - en.x, player.y - en.y) < en.radius + 8 && player.invincible === 0 && !activeBomb.active) {
+            playerDeath();
+        }
+    });
+
+    if (gameTick === 220 && !boss.active) startBossBattle();
+
+    if (boss.active) {
+        if (boss.y < boss.targetY) boss.y += 2.2;
+
+        // 自機を狙って発射される少し多めの頻度の弾幕
+        let targetFreq = (currentStage === 2) ? 7 : 17;
+        if (gameTick % targetFreq === 0) {
+            let aimAngle = Math.atan2(player.y - boss.y, player.x - boss.x);
+            enemyBullets.push({ x: boss.x, y: boss.y, speed: 4.6, angle: aimAngle, color: '#ff2a55', r: 5 });
+            enemyBullets.push({ x: boss.x, y: boss.y, speed: 4.1, angle: aimAngle - 0.14, color: '#ffb300', r: 4 });
+            enemyBullets.push({ x: boss.x, y: boss.y, speed: 4.1, angle: aimAngle + 0.14, color: '#ffb300', r: 4 });
+        }
+
+        // スペルカードごとの複雑化攻撃展開
+        let patternFreq = (currentStage === 2) ? 5 : (38 - currentSC * 8);
+        if (gameTick % patternFreq === 0) {
+            if (currentStage === 2) { 
+                // 「Last Shoot」ステージ：最大限に難しい弾幕
+                let lines = 44; let rot = gameTick * 0.065;
+                for(let i=0; i<lines; i++) {
+                    enemyBullets.push({ x: boss.x, y: boss.y, speed: 3.6, angle: (Math.PI*2/lines)*i + rot, color: '#da16ff', r: 4 });
+                    enemyBullets.push({ x: boss.x, y: boss.y, speed: 2.3, angle: (Math.PI*2/lines)*i - rot, color: '#1652ff', r: 4 });
+                }
+            } else if (currentSC === 0) { 
+                // 1ステージ目通常：難易度大幅低下状態
+                let lines = 4;
+                for(let i=0; i<lines; i++) enemyBullets.push({ x: boss.x, y: boss.y, speed: 1.3, angle: (Math.PI*2/lines)*i, color: '#ffffff', r: 5 });
+            } else if (currentSC === 1) { 
+                // スペカ1
+                let lines = 12; let rot = gameTick * 0.02;
+                for(let i=0; i<lines; i++) enemyBullets.push({ x: boss.x, y: boss.y, speed: 2.0, angle: (Math.PI*2/lines)*i + rot, color: '#00ccff', r: 4.5 });
+            } else if (currentSC === 2) { 
+                // スペカ2 (複雑化)
+                let lines = 18;
+                for(let i=0; i<lines; i++) enemyBullets.push({ x: boss.x, y: boss.y, speed: 1.6, angle: (Math.PI*2/lines)*i, color: '#ffaa00', r: 4, accel: 0.035 });
+            } else if (currentSC === 3) { 
+                // スペカ3 (さらに複雑化)
+                let lines = 26; let wave = Math.sin(gameTick * 0.08) * 0.5;
+                for(let i=0; i<lines; i++) enemyBullets.push({ x: boss.x, y: boss.y, speed: 2.7, angle: (Math.PI*2/lines)*i + wave, color: '#ff3399', r: 5 });
+            }
+        }
+        checkBossState();
+    }
+
+    enemyBullets.forEach((eb, eIdx) => {
+        if (eb.accel) eb.speed += eb.accel;
+        eb.x += Math.cos(eb.angle) * eb.speed; eb.y += Math.sin(eb.angle) * eb.speed;
+        if (eb.x < -30 || eb.x > 590 || eb.y < -30 || eb.y > 630) { enemyBullets.splice(eIdx, 1); return; }
+
+        // 被弾判定
+        if (Math.hypot(eb.x - player.x, eb.y - player.y) < player.radius + eb.r && player.invincible === 0 && !activeBomb.active) {
+            playerDeath();
+        }
+    });
+
+    // アイテム追従移動・取得
+    items.forEach((it, iIdx) => {
+        it.y += it.vy; if (it.y > 610) items.splice(iIdx, 1);
+
+        if (player.y < 220 || Math.hypot(it.x - player.x, it.y - player.y) < 85) {
+            let itemAngle = Math.atan2(player.y - it.y, player.x - it.x);
+            it.x += Math.cos(itemAngle) * 11; it.y += Math.sin(itemAngle) * 11; 
+        }
+
+        if (Math.hypot(it.x - player.x, it.y - player.y) < 18) {
+            if (it.type === 'score') score += 1000;
+            if (it.type === 'power') power = Math.min(4.00, power + 0.05);
+            if (it.type === 'extend') { lives = Math.min(8, lives + 1); score += 2000; } 
+            items.splice(iIdx, 1);
+        }
+    });
+
+    document.getElementById('score').innerText = String(score).padStart(9, '0');
+    document.getElementById('power').innerText = `${power.toFixed(2)} / 4.00`;
+    document.getElementById('enemy-hp-text').innerText = boss.active ? `${Math.max(0, Math.floor(boss.hp))}` : '----';
+}
+
+function playerDeath() {
+    playSE('pichun');
+    lives--;
+    isPhantasmEligible = false; 
+    player.invincible = 120; player.x = 280; player.y = 520; enemyBullets = [];
+    if (lives < 0) { gameActive = false; triggerGameOverMenu(); }
+}
+
+function draw() {
+    ctx.fillStyle = 'rgba(2, 2, 8, 0.28)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // 抽象的な星空ワープの描画
+    ctx.lineWidth = 1.5;
+    starNodes.forEach(star => {
+        let screenX = canvas.width / 2 + Math.cos(star.angle) * star.radius;
+        let screenY = canvas.height / 2 + Math.sin(star.angle) * star.radius;
+        
+        if (screenX >= 0 && screenX <= canvas.width && screenY >= 0 && screenY <= canvas.height) {
+            ctx.fillStyle = (currentStage === 2) ? '#e6005c' : star.color;
+            ctx.strokeStyle = (currentStage === 2) ? 'rgba(230,0,92,0.15)' : 'rgba(77,166,255,0.15)';
+            ctx.beginPath();
+            ctx.arc(screenX, screenY, star.size, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.beginPath();
+            ctx.moveTo(screenX, screenY);
+            ctx.lineTo(canvas.width/2 + Math.cos(star.angle)*(star.radius + 16), canvas.height/2 + Math.sin(star.angle)*(star.radius + 16));
+            ctx.stroke();
+        }
+    });
+
+    ctx.globalCompositeOperation = 'screen';
+
+    if (boss.active) {
+        ctx.strokeStyle = 'rgba(0, 160, 255, 0.45)'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(boss.x, boss.y, boss.radius + 12 + Math.sin(gameTick*0.08)*6, 0, Math.PI*2); ctx.stroke();
+        ctx.fillStyle = '#00b3ff'; ctx.beginPath(); ctx.arc(boss.x, boss.y, boss.radius * 0.4, 0, Math.PI*2); ctx.fill();
+
+        // 相手ゲージ
+        ctx.fillStyle = 'rgba(8, 24, 64, 0.6)'; ctx.fillRect(20, 15, canvas.width - 40, 7);
+        ctx.fillStyle = '#00ffcc'; ctx.fillRect(20, 15, (canvas.width - 40) * (boss.hp / boss.maxHp), 7);
+    }
+
+    enemies.forEach(en => { ctx.fillStyle = '#ff33aa'; ctx.beginPath(); ctx.arc(en.x, en.y, en.radius, 0, Math.PI*2); ctx.fill(); });
+
+    if (player.invincible % 4 < 2) {
+        ctx.fillStyle = '#33d6ff'; ctx.beginPath();
+        ctx.moveTo(player.x, player.y - 12); ctx.lineTo(player.x - 9, player.y + 9); ctx.lineTo(player.x + 9, player.y + 9); ctx.fill();
+        if (keys.Shift) {
+            ctx.fillStyle = '#ff2222'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(player.x, player.y, player.radius + 1, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+        }
+    }
+
+    ctx.fillStyle = '#ffff55'; playerBullets.forEach(pb => { ctx.fillRect(pb.x - 2, pb.y - 10, 4, 18); });
+    
+    enemyBullets.forEach(eb => {
+        ctx.fillStyle = eb.color; ctx.beginPath(); ctx.arc(eb.x, eb.y, eb.r, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(eb.x, eb.y, eb.r * 0.4, 0, Math.PI*2); ctx.fill();
+    });
+
+    items.forEach(it => {
+        if (it.type === 'score') { ctx.fillStyle = '#3388ff'; ctx.fillRect(it.x - 5, it.y - 5, 10, 10); }
+        if (it.type === 'power') { ctx.fillStyle = '#ff2244'; ctx.fillRect(it.x - 5, it.y - 5, 10, 10); }
+        if (it.type === 'extend') { ctx.fillStyle = '#ffbb00'; ctx.font = '15px Arial'; ctx.fillText('★', it.x - 6, it.y + 5); }
+    });
+
+    if (activeBomb.active) {
+        ctx.fillStyle = `rgba(0, 100, 255, ${activeBomb.timer / 180})`; ctx.beginPath();
+        ctx.arc(player.x, player.y, (180 - activeBomb.timer) * 5.5, 0, Math.PI*2); ctx.fill();
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+
+    // 画面左斜め上に小さく星形の図で残機量を表示
+    ctx.fillStyle = '#ff66b3'; ctx.font = '13px Arial'; ctx.textAlign = 'left';
+    let lifeStars = ''; for(let i=0; i<lives; i++) lifeStars += '★';
+    ctx.fillText('⭐ ' + lifeStars, 15, 40);
+
+    // ボム発動回数の表示
+    ctx.fillStyle = '#2de3b1';
+    let bombStars = ''; for(let i=0; i<bombsLeft; i++) bombStars += '★';
+    ctx.fillText('💣 ' + bombStars + '  [発動回数: ' + bombUsedCount + '/3]', 15, 60);
+}
+
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+
+// 初回起動
+initGame();
+loop();
+</script>
+
+</body>
+</html>
