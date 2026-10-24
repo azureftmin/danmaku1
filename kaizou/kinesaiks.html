@@ -1,0 +1,551 @@
+<html lang="ja"><head>
+    <meta charset="UTF-8">
+    <title>Danmaku STG - Subterranean Extra Start with Z Key</title>
+    <style>
+        body { background: #000; color: #fff; font-family: 'Courier New', monospace; margin: 0; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        
+        /* ゲーム全体を包むコンテナ（常に画面中央に配置） */
+        #game-container { 
+            position: relative; 
+            border: 2px solid #555; 
+            width: 450px; 
+            height: 600px; 
+            max-width: 100vw; 
+            max-height: 100vh;
+            display: flex; 
+            justify-content: center; 
+            align-items: center;
+        }
+
+        /* キャンバスをコンテナいっぱいに、かつアスペクト比を維持して中央配置 */
+        canvas { 
+            background: #050510; 
+            display: block; 
+            width: 100%; 
+            height: 100%; 
+            object-fit: contain; 
+            cursor: pointer;
+        }
+
+        #ui { position: absolute; top: 0; left: 0; width: 100%; padding: 10px; box-sizing: border-box; pointer-events: none; z-index: 10; display: flex; justify-content: space-between; align-items: center; }
+        .hp-bar-container { width: 150px; }
+        .hp-bar-bg { width: 100%; height: 6px; background: #333; margin-top: 5px; border: 1px solid #777; }
+        #hp-bar-fill { width: 100%; height: 100%; background: linear-gradient(90deg, #f00, #ff0); transition: width 0.1s; }
+        .info { font-size: 14px; text-shadow: 1px 1px 2px #000; display: flex; gap: 15px; }
+        
+        #pause-screen, .overlay-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 30; text-align: center; }
+        .dialog-btn { margin-top: 20px; background: #111; color: #0ff; border: 2px solid #0ff; padding: 10px 20px; font-family: 'Courier New', monospace; font-size: 16px; cursor: pointer; }
+        .dialog-btn:hover { background: #0ff; color: #000; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="ui">
+        <div class="info">
+            <span>STAGE: <b id="stage-val">EXTRA</b></span>
+            <span>SCORE: <b id="score-val">0</b></span>
+        </div>
+        <div class="hp-bar-container">
+            <div style="font-size:11px;">BOSS HP</div>
+            <div class="hp-bar-bg"><div id="hp-bar-fill" style="width: 100%;"></div></div>
+        </div>
+    </div>
+
+    <!-- ポーズ画面 -->
+    <div id="pause-screen">
+        <h1 style="color:#0ff; font-size:50px; margin-bottom:10px;">PAUSE</h1>
+        <p style="color:#fff; font-size:20px;">[Esc] to Resume</p>
+    </div>
+
+    <!-- 被弾（ゲームオーバー）画面 -->
+    <div id="gameover-screen" class="overlay-screen">
+        <h1 style="color:#f33; font-size:40px; margin-bottom:10px;">GAME OVER</h1>
+        <p style="color:#fff; font-size:18px;">被弾しました！</p>
+        <p style="color:#ff0; font-size:20px; margin-top:10px;">SCORE: <span id="final-score">0</span></p>
+        <button class="dialog-btn" onclick="resetGame()">RETRY</button>
+    </div>
+
+    <!-- クリア画面 -->
+    <div id="win-screen" class="overlay-screen">
+        <h1 style="color:#0ff; font-size:40px; margin-bottom:10px;">STAGE CLEAR!</h1>
+        <p style="color:#fff; font-size:18px;">神の領域の回避力です！</p>
+        <p style="color:#ff0; font-size:20px; margin-top:10px;">FINAL SCORE: <span id="win-score">0</span></p>
+        <button class="dialog-btn" onclick="resetGame()">PLAY AGAIN</button>
+    </div>
+
+    <canvas id="gameCanvas" width="450" height="600"></canvas>
+</div>
+
+<script>
+// --- 自作WAV BGMの読み込み ---
+const bgmAudio = new Audio('haikei.wav');
+bgmAudio.loop = true;
+bgmAudio.volume = 0.5;
+
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+canvas.width = 450;
+canvas.height = 600;
+
+// --- ゲーム設定 ---
+let stage = 51;
+let score = 0;
+let frames = 0;
+let isGameOver = false;
+let isTransitioning = false;
+let isPaused = false;
+let gameStarted = false;
+
+const keys = {};
+
+// ゲーム開始処理用の共通関数
+function startGame() {
+    if (!gameStarted) {
+        gameStarted = true;
+        bgmAudio.play().catch(e => console.log("BGM play failed:", e));
+        requestAnimationFrame(loop);
+    }
+}
+
+window.addEventListener('keydown', (e) => {
+    // F11キーで全画面切り替え
+    if (e.code === 'F11') {
+        e.preventDefault();
+        toggleFullscreen();
+    }
+
+    // Escキーでポーズ切り替え
+    if (e.code === 'Escape' && gameStarted && !isGameOver) {
+        e.preventDefault();
+        togglePause();
+        return;
+    }
+
+    // 未開始状態でZキーが押されたらゲームスタート
+    if (!gameStarted && (e.code === 'KeyZ' || e.code === 'KeyY')) {
+        startGame();
+        return;
+    }
+
+    if (!isPaused && !isGameOver) {
+        keys[e.code] = true;
+    }
+}, true);
+
+window.addEventListener('keyup', (e) => {
+    keys[e.code] = false;
+}, true);
+
+function togglePause() {
+    isPaused = !isPaused;
+    const pauseScreen = document.getElementById("pause-screen");
+    pauseScreen.style.display = isPaused ? 'flex' : 'none';
+
+    if (isPaused) {
+        bgmAudio.pause();
+    } else {
+        bgmAudio.play().catch(e => {});
+        requestAnimationFrame(loop);
+    }
+}
+
+function loop() {
+    if (!isGameOver && !isPaused && gameStarted) {
+        update();
+        draw();
+        requestAnimationFrame(loop);
+    }
+}
+
+function toggleFullscreen() {
+    const container = document.getElementById("game-container");
+    if (!document.fullscreenElement) {
+        container.requestFullscreen().catch(err => {
+            console.log(`全画面表示のエラー: ${err.message}`);
+        });
+    } else {
+        document.exitFullscreen();
+    }
+}
+
+// --- 3D背景（石造り回廊風パース） ---
+const focalLength = 220;
+const fovCenterX = canvas.width / 2;
+const fovCenterY = canvas.height / 2;
+const maxZ = 1000;
+
+const pillars3D = [];
+for (let i = 0; i < 12; i++) {
+    pillars3D.push({ z: (i / 12) * maxZ, width: 140 });
+}
+
+const snowParticles = [];
+for (let i = 0; i < 60; i++) {
+    snowParticles.push({
+        x: (Math.random() - 0.5) * 600,
+        y: (Math.random() - 0.5) * 600,
+        z: Math.random() * maxZ,
+        size: 2 + Math.random() * 2.5
+    });
+}
+
+// --- オブジェクト ---
+const player = {
+    x: 225, y: 520, 
+    startX: 225, startY: 520,
+    r: 2, visualR: 8, speed: 4.5,
+    reset() {
+        this.x = this.startX;
+        this.y = this.startY;
+    },
+    draw() {
+        ctx.fillStyle = "#0df";
+        ctx.beginPath(); ctx.arc(this.x, this.y, this.visualR, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = "#fff";
+        ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.fill();
+    },
+    update() {
+        let s = keys['ShiftLeft'] ? this.speed / 2.5 : this.speed;
+        if (keys['ArrowUp'] && this.y > 20) this.y -= s;
+        if (keys['ArrowDown'] && this.y < canvas.height - 20) this.y += s;
+        if (keys['ArrowLeft'] && this.x > 20) this.x -= s;
+        if (keys['ArrowRight'] && this.x < canvas.width - 20) this.x += s;
+    }
+};
+
+const boss = {
+    x: 225, y: -100, targetY: 100, r: 30, hp: 2000, maxHp: 2000,
+    reset() {
+        this.x = 225;
+        this.y = -100;
+        this.hp = this.maxHp;
+    },
+    update() {
+        if (frames >= 600) {
+            if (this.y < this.targetY) this.y += 2;
+            else {
+                this.x = 225 + Math.sin(frames * 0.015) * 90;
+                this.y = 100 + Math.cos(frames * 0.02) * 20;
+            }
+        }
+    },
+    draw() {
+        if (this.y > 0) {
+            ctx.strokeStyle = "#ff55ff"; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.stroke();
+        }
+    }
+};
+
+let eBullets = [];
+let pBullets = [];
+let mobs = [];
+
+class Bullet {
+    constructor(x, y, vx, vy, color, r, isPhase1 = false) {
+        this.x = x; this.y = y; this.vx = vx; this.vy = vy; this.color = color; this.r = r;
+        this.isPhase1 = isPhase1;
+        this.state = 'MOVING';
+        this.stopTargetY = y + 150;
+        this.timer = 0;
+    }
+    
+    update() {
+        if (this.isPhase1) {
+            let gravityFactor = Math.max(0.3, this.y / 250);
+
+            if (this.state === 'MOVING') {
+                this.x += this.vx * gravityFactor;
+                this.y += this.vy * gravityFactor;
+
+                if (this.y >= this.stopTargetY - 15 && this.y <= this.stopTargetY + 15) {
+                    this.vx = 0;
+                    this.vy = 0;
+                    this.state = 'STOPPED';
+                }
+            } 
+            else if (this.state === 'STOPPED') {
+                this.timer++;
+                if (this.timer > 30) {
+                    let angle = Math.atan2(player.y - this.y, player.x - this.x);
+                    let speed = 5.0;
+                    this.vx = Math.cos(angle) * speed;
+                    this.vy = Math.sin(angle) * speed;
+                    this.state = 'AGAIN';
+                }
+            } 
+            else if (this.state === 'AGAIN') {
+                this.x += this.vx * gravityFactor;
+                this.y += this.vy * gravityFactor;
+            }
+        } 
+        else {
+            let gravityFactor = Math.max(0.3, this.y / 250);
+            this.x += this.vx * gravityFactor;
+            this.y += this.vy * gravityFactor;
+        }
+    }
+
+    draw() {
+        ctx.fillStyle = (this.isPhase1 && this.state === 'STOPPED') ? '#ffff00' : this.color;
+        ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.fill();
+    }
+}
+
+// --- 弾幕＆雑魚ウェーブ定義 ---
+function shoot() {
+    if (isTransitioning) return;
+    const f = frames;
+
+    if (f < 600) {
+        if (f % 15 === 0) {
+            const waveIndex = Math.floor(f / 15);
+            const fromLeft = (waveIndex % 2 === 0);
+            const count = 40;
+            for (let i = 0; i < count; i++) {
+                let mobX = fromLeft ? (-30 - i * 14) : (canvas.width + 30 + i * 14);
+                let mobY = 40 + (i * 2.5);
+                mobs.push({
+                    x: mobX,
+                    y: mobY,
+                    vx: fromLeft ? 6.5 : -6.5,
+                    vy: 0.8,
+                    hasShot: false
+                });
+            }
+        }
+    }
+
+    mobs.forEach((m) => {
+        m.x += m.vx;
+        m.y += m.vy;
+
+        if (!m.hasShot && m.x > 10 && m.x < canvas.width - 10) {
+            m.hasShot = true;
+            let angle = Math.atan2(player.y - m.y, player.x - m.x);
+            let speed = 4.2;
+            eBullets.push(new Bullet(
+                m.x, m.y,
+                Math.cos(angle) * speed,
+                Math.sin(angle) * speed,
+                "#88ccff", 3.5,
+                true
+            ));
+        }
+    });
+
+    mobs = mobs.filter(m => m.x > -600 && m.x < canvas.width + 600 && m.y < canvas.height + 100);
+
+    if (f >= 600) {
+        const b = boss;
+        if (b.y >= b.targetY) {
+            if (f % 10 === 0) {
+                createRing(b.x, b.y, f * 0.08, 2.5, "#ff55ff", 3.5, 24, false);
+                createRing(b.x, b.y, -f * 0.06, 2.0, "#55ffff", 3.5, 24, false);
+            }
+            if (f % 4 === 0) {
+                let randomAngle = Math.random() * Math.PI * 2;
+                let speed = 2.0 + Math.random() * 1.5;
+                eBullets.push(new Bullet(b.x, b.y, Math.cos(randomAngle) * speed, Math.sin(randomAngle) * speed, "#ffffff", 3, false));
+            }
+        }
+    }
+}
+
+function createRing(x, y, startAngle, speed, color, r, count, isPhase1) {
+    for (let i = 0; i < count; i++) {
+        const angle = startAngle + (Math.PI * 2 / count) * i;
+        eBullets.push(new Bullet(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, color, r, isPhase1));
+    }
+}
+
+// --- メインループ ---
+function update() {
+    if (isGameOver || isPaused) return;
+    frames++;
+    player.update();
+    boss.update();
+    shoot();
+
+    // 自機弾の発射
+    if (keys['KeyZ'] && frames % 5 === 0) {
+        pBullets.push({
+            x: player.x,
+            y: player.y - 10,
+            vx: 0,
+            vy: -14,
+            r: 3,
+            color: "#ffffff",
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+            },
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        });
+    }
+
+    // 自機弾の更新とボスへのヒット判定
+    pBullets.forEach((pb, i) => {
+        pb.update();
+        if (boss.y > 0 && Math.hypot(pb.x - boss.x, pb.y - boss.y) < boss.r + pb.r) {
+            boss.hp -= 10;
+            pBullets.splice(i, 1);
+            score += 10;
+        }
+        if (pb.y < 0) {
+            pBullets.splice(i, 1);
+        }
+    });
+
+    // ボス本体との接触判定
+    if (boss.y > 0 && Math.hypot(boss.x - player.x, boss.y - player.y) < boss.r + player.r) {
+        gameOver();
+    }
+
+    // 敵弾との接触判定
+    eBullets.forEach((eb, i) => {
+        eb.update();
+
+        if (Math.hypot(eb.x - player.x, eb.y - player.y) < eb.r + player.r) {
+            gameOver();
+        }
+
+        if (eb.x < -40 || eb.x > canvas.width + 40 || eb.y < -40 || eb.y > canvas.height + 40) {
+            eBullets.splice(i, 1);
+        }
+    });
+
+    document.getElementById("hp-bar-fill").style.width = Math.max(0, (boss.hp / boss.maxHp * 100)) + "%";
+    document.getElementById("score-val").innerText = score;
+
+    if (boss.hp <= 0 && !isTransitioning) {
+        win();
+    }
+}
+
+function gameOver() {
+    isGameOver = true;
+    bgmAudio.pause();
+    document.getElementById("final-score").innerText = score;
+    document.getElementById("gameover-screen").style.display = 'flex';
+}
+
+function win() {
+    isGameOver = true;
+    bgmAudio.pause();
+    document.getElementById("win-score").innerText = score;
+    document.getElementById("win-screen").style.display = 'flex';
+}
+
+function resetGame() {
+    isGameOver = false;
+    isPaused = false;
+    frames = 0;
+    score = 0;
+    eBullets = [];
+    pBullets = [];
+    mobs = [];
+    
+    player.reset();
+    boss.reset();
+
+    document.getElementById("gameover-screen").style.display = 'none';
+    document.getElementById("win-screen").style.display = 'none';
+    document.getElementById("pause-screen").style.display = 'none';
+
+    bgmAudio.currentTime = 0;
+    bgmAudio.play().catch(e => {});
+    
+    requestAnimationFrame(loop);
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // --- 背景描画 ---
+    const bgGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    bgGrad.addColorStop(0, '#1c1b22');
+    bgGrad.addColorStop(0.5, '#2c2a35');
+    bgGrad.addColorStop(1, '#0f0e14');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const speedZ = 6;
+
+    pillars3D.sort((a, b) => b.z - a.z);
+    pillars3D.forEach(p => {
+        p.z -= speedZ;
+        if (p.z <= 10) p.z += maxZ;
+
+        const scale = focalLength / p.z;
+        const projWidth = p.width * scale;
+        const alpha = Math.min(1, Math.max(0, (maxZ - p.z) / 400));
+
+        const leftX2D = fovCenterX + (-170 * scale);
+        const rightX2D = fovCenterX + (170 * scale);
+
+        ctx.fillStyle = `rgba(60, 58, 70, ${alpha})`;
+        ctx.fillRect(leftX2D - projWidth / 2, 0, projWidth, canvas.height);
+        ctx.strokeStyle = `rgba(90, 85, 100, ${alpha})`;
+        ctx.lineWidth = Math.max(1, 3 * scale);
+        ctx.strokeRect(leftX2D - projWidth / 2, 0, projWidth, canvas.height);
+
+        ctx.fillStyle = `rgba(60, 58, 70, ${alpha})`;
+        ctx.fillRect(rightX2D - projWidth / 2, 0, projWidth, canvas.height);
+        ctx.strokeStyle = `rgba(90, 85, 100, ${alpha})`;
+        ctx.strokeRect(rightX2D - projWidth / 2, 0, projWidth, canvas.height);
+    });
+
+    snowParticles.forEach(sp => {
+        sp.z -= speedZ * 0.8;
+        if (sp.z <= 10) sp.z += maxZ;
+
+        const scale = focalLength / sp.z;
+        const projX = fovCenterX + (sp.x * scale);
+        const projY = fovCenterY + (sp.y * scale) + (frames * 0.5) % canvas.height;
+        let wrappedY = projY % canvas.height;
+        if (wrappedY < 0) wrappedY += canvas.height;
+
+        const projSize = Math.max(1, sp.size * scale);
+        const alpha = Math.min(0.8, (maxZ - sp.z) / 300);
+
+        ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+        ctx.beginPath();
+        ctx.arc(projX, wrappedY, projSize, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    mobs.forEach(m => {
+        ctx.fillStyle = "#00ffff";
+        ctx.beginPath(); ctx.arc(m.x, m.y, 8, 0, Math.PI*2); ctx.fill();
+    });
+
+    // --- オブジェクト描画 ---
+    player.draw();
+    boss.draw();
+    pBullets.forEach(b => b.draw());
+    eBullets.forEach(b => b.draw());
+}
+
+// 初期画面メッセージ描画
+function renderTitle() {
+    ctx.fillStyle = '#fff'; ctx.font = '20px Courier New'; ctx.textAlign = 'center';
+    ctx.fillText('CLICK OR [Z] TO START', canvas.width / 2, canvas.height / 2 - 10);
+    ctx.fillStyle = '#888'; ctx.font = '14px Courier New';
+    ctx.fillText('[F11] to Toggle Fullscreen', canvas.width / 2, canvas.height / 2 + 20);
+}
+renderTitle();
+
+// キャンバス自体の直接クリックでもゲームを開始
+canvas.addEventListener('mousedown', () => {
+    startGame();
+});
+</script>
+
+</body></html>
