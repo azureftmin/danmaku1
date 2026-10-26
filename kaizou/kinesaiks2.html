@@ -1,6 +1,6 @@
 <html lang="ja"><head>
     <meta charset="UTF-8">
-    <title> kinesaiks Subterranean Extra</title>
+    <title>kinesaiks Subterranean Extra</title>
     <style>
         body { background: #000; color: #fff; font-family: 'Courier New', monospace; margin: 0; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; }
         
@@ -47,7 +47,7 @@
             <span>SCORE: <b id="score-val">0</b></span>
         </div>
         <div class="hp-bar-container">
-            <div style="font-size:11px;">BOSS HP</div>
+            <div style="font-size:11px;" id="boss-hp-label">BOSS HP (Phase 1)</div>
             <div class="hp-bar-bg"><div id="hp-bar-fill" style="width: 100%;"></div></div>
         </div>
     </div>
@@ -105,47 +105,42 @@ const keys = {};
 function startGame() {
     if (!gameStarted) {
         gameStarted = true;
+        isPaused = false;
         bgmAudio.play().catch(e => console.log("BGM play failed:", e));
         requestAnimationFrame(loop);
     }
 }
 
 window.addEventListener('keydown', (e) => {
-    // F11キーで全画面切り替え
     if (e.code === 'F11') {
         e.preventDefault();
         toggleFullscreen();
     }
 
-    // [R] キーで即座にリトライ（ゲームオーバー中・クリア中などいつでもOK）
     if (e.code === 'KeyR') {
         e.preventDefault();
         resetGame();
         return;
     }
 
-    // ゲームオーバー画面またはクリア画面が表示されているときにZ/Yキーが押されたらリトライ
     if (isGameOver && (e.code === 'KeyZ' || e.code === 'KeyY')) {
         e.preventDefault();
         resetGame();
         return;
     }
 
-    // Escキーでポーズ切り替え
     if (e.code === 'Escape' && gameStarted && !isGameOver) {
         e.preventDefault();
         togglePause();
         return;
     }
 
-    // ポーズ中にZキーが押されたらゲーム再開
     if (isPaused && (e.code === 'KeyZ' || e.code === 'KeyY')) {
         e.preventDefault();
         togglePause();
         return;
     }
 
-    // 未開始状態でZキーが押されたらゲームスタート
     if (!gameStarted && (e.code === 'KeyZ' || e.code === 'KeyY')) {
         startGame();
         return;
@@ -229,7 +224,7 @@ const player = {
         ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.fill();
     },
     update() {
-        let s = keys['ShiftLeft'] ? this.speed / 2.5 : this.speed;
+        let s = keys['ShiftLeft'] ? this.speed / 4.0 : this.speed;
         if (keys['ArrowUp'] && this.y > 20) this.y -= s;
         if (keys['ArrowDown'] && this.y < canvas.height - 20) this.y += s;
         if (keys['ArrowLeft'] && this.x > 20) this.x -= s;
@@ -238,11 +233,15 @@ const player = {
 };
 
 const boss = {
-    x: 225, y: -100, targetY: 100, r: 30, hp: 2000, maxHp: 2000,
+    x: 225, y: -100, targetY: 100, r: 30, 
+    hp: 500, maxHp: 500, phase: 1,
     reset() {
         this.x = 225;
         this.y = -100;
-        this.hp = this.maxHp;
+        this.phase = 1;
+        this.maxHp = 500;
+        this.hp = 500;
+        document.getElementById("boss-hp-label").innerText = "BOSS HP (Phase 1)";
     },
     update() {
         if (frames >= 600) {
@@ -255,7 +254,8 @@ const boss = {
     },
     draw() {
         if (this.y > 0) {
-            ctx.strokeStyle = "#ff55ff"; ctx.lineWidth = 3;
+            ctx.strokeStyle = (this.phase === 1) ? "#ff55ff" : "#55ffff"; 
+            ctx.lineWidth = 3;
             ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.stroke();
         }
     }
@@ -266,16 +266,43 @@ let pBullets = [];
 let mobs = [];
 
 class Bullet {
-    constructor(x, y, vx, vy, color, r, isPhase1 = false) {
+    constructor(x, y, vx, vy, color, r, isPhase1 = false, isSpecialStop = false) {
         this.x = x; this.y = y; this.vx = vx; this.vy = vy; this.color = color; this.r = r;
+        this.origVx = vx;
+        this.origVy = vy;
         this.isPhase1 = isPhase1;
+        this.isSpecialStop = isSpecialStop;
         this.state = 'MOVING';
         this.stopTargetY = y + 150;
         this.timer = 0;
     }
     
     update() {
-        if (this.isPhase1) {
+        if (this.isSpecialStop) {
+            if (this.state === 'MOVING') {
+                this.x += this.vx;
+                this.y += this.vy;
+                if (this.y >= player.y - 25) {
+                    this.vx = 0;
+                    this.vy = 0;
+                    this.state = 'STOPPED';
+                }
+            } else if (this.state === 'STOPPED') {
+                this.timer++;
+                if (this.timer > 35) { 
+                    let baseAngle = Math.atan2(this.origVy, this.origVx);
+                    let angleOffset = (Math.random() - 0.5) * (Math.PI / 6);
+                    let finalAngle = baseAngle + angleOffset;
+                    let slowSpeed = 0.9;
+                    this.vx = Math.cos(finalAngle) * slowSpeed;
+                    this.vy = Math.sin(finalAngle) * slowSpeed;
+                    this.state = 'AGAIN';
+                }
+            } else if (this.state === 'AGAIN') {
+                this.x += this.vx;
+                this.y += this.vy;
+            }
+        } else if (this.isPhase1) {
             let gravityFactor = Math.max(0.3, this.y / 250);
 
             if (this.state === 'MOVING') {
@@ -316,7 +343,7 @@ class Bullet {
     }
 }
 
-// --- 弾幕＆雑魚ウェーブ定義（左右両方から同密度で発射） ---
+// --- 弾幕＆雑魚ウェーブ定義 ---
 function shoot() {
     if (isTransitioning) return;
     const f = frames;
@@ -325,7 +352,6 @@ function shoot() {
         if (f % 0.625 === 0) { 
             const count = 160; 
             
-            // 左側からのウェーブ
             for (let i = 0; i < count; i++) {
                 let mobX = -30 - i * 14;
                 let mobY = 40 + (i * 2.5);
@@ -338,7 +364,6 @@ function shoot() {
                 });
             }
 
-            // 右側からのウェーブ（同時発射・同密度）
             for (let i = 0; i < count; i++) {
                 let mobX = canvas.width + 30 + i * 14;
                 let mobY = 40 + (i * 2.5);
@@ -376,14 +401,21 @@ function shoot() {
     if (f >= 600) {
         const b = boss;
         if (b.y >= b.targetY) {
-            if (f % 10 === 0) {
-                createRing(b.x, b.y, f * 0.08, 2.5, "#ff55ff", 3.5, 24, false);
-                createRing(b.x, b.y, -f * 0.06, 2.0, "#55ffff", 3.5, 24, false);
-            }
-            if (f % 4 === 0) {
-                let randomAngle = Math.random() * Math.PI * 2;
-                let speed = 2.0 + Math.random() * 1.5;
-                eBullets.push(new Bullet(b.x, b.y, Math.cos(randomAngle) * speed, Math.sin(randomAngle) * speed, "#ffffff", 3, false));
+            if (b.phase === 1) {
+                if (f % 10 === 0) {
+                    createRing(b.x, b.y, f * 0.08, 2.5, "#ff55ff", 3.5, 24, false);
+                    createRing(b.x, b.y, -f * 0.06, 2.0, "#55ffff", 3.5, 24, false);
+                }
+                if (f % 4 === 0) {
+                    let randomAngle = Math.random() * Math.PI * 2;
+                    let speed = 2.0 + Math.random() * 1.5;
+                    eBullets.push(new Bullet(b.x, b.y, Math.cos(randomAngle) * speed, Math.sin(randomAngle) * speed, "#ffffff", 3, false));
+                }
+            } else if (b.phase === 2) {
+                // ボスフェーズ2：発射周期を速く（約1.3倍速い 17フレームごと）
+                if (f % 17 === 0) {
+                    createStopRing(b.x, b.y, f * 0.03, 4.4, "#ff33aa", 2.8, 128, true);
+                }
             }
         }
     }
@@ -392,7 +424,14 @@ function shoot() {
 function createRing(x, y, startAngle, speed, color, r, count, isPhase1) {
     for (let i = 0; i < count; i++) {
         const angle = startAngle + (Math.PI * 2 / count) * i;
-        eBullets.push(new Bullet(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, color, r, isPhase1));
+        eBullets.push(new Bullet(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, color, r, isPhase1, false));
+    }
+}
+
+function createStopRing(x, y, startAngle, speed, color, r, count, isSpecialStop) {
+    for (let i = 0; i < count; i++) {
+        const angle = startAngle + (Math.PI * 2 / count) * i;
+        eBullets.push(new Bullet(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, color, r, false, isSpecialStop));
     }
 }
 
@@ -460,8 +499,17 @@ function update() {
     document.getElementById("hp-bar-fill").style.width = Math.max(0, (boss.hp / boss.maxHp * 100)) + "%";
     document.getElementById("score-val").innerText = score;
 
+    // ボスのフェーズ移行およびクリア判定
     if (boss.hp <= 0 && !isTransitioning) {
-        win();
+        if (boss.phase === 1) {
+            boss.phase = 2;
+            boss.maxHp = 6000;
+            boss.hp = 6000;
+            document.getElementById("boss-hp-label").innerText = "BOSS HP (Phase 2)";
+            eBullets = [];
+        } else {
+            win();
+        }
     }
 }
 
