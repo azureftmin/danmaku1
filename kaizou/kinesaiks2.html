@@ -80,10 +80,27 @@
 </div>
 
 <script>
-// --- 自作WAV BGMの読み込み ---
+// --- BGMの読み込み ---
 const bgmAudio = new Audio('haikei.wav');
 bgmAudio.loop = true;
 bgmAudio.volume = 0.5;
+
+// フェーズ2用のBGMオブジェクト
+const bgmAudio2 = new Audio('haikei2.wav');
+bgmAudio2.loop = false; // 1回再生
+bgmAudio2.volume = 0.5;
+
+const bgmAudio3 = new Audio('haikei3.wav');
+bgmAudio3.loop = true; // ループ再生
+bgmAudio3.volume = 0.5;
+
+// haikei2.wav が終了した瞬間に haikei3.wav を再生するイベントリスナー
+bgmAudio2.addEventListener('ended', () => {
+    if (boss.phase === 2 && !isGameOver && !isPaused) {
+        bgmAudio3.currentTime = 0;
+        bgmAudio3.play().catch(e => console.log("BGM3 play failed:", e));
+    }
+});
 
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
@@ -162,8 +179,19 @@ function togglePause() {
 
     if (isPaused) {
         bgmAudio.pause();
+        bgmAudio2.pause();
+        bgmAudio3.pause();
     } else {
-        bgmAudio.play().catch(e => {});
+        if (boss.phase === 2) {
+            // フェーズ2でポーズ解除された場合、再生中のBGMを再開
+            if (!bgmAudio2.ended && bgmAudio2.currentTime > 0) {
+                bgmAudio2.play().catch(e => {});
+            } else {
+                bgmAudio3.play().catch(e => {});
+            }
+        } else {
+            bgmAudio.play().catch(e => {});
+        }
         requestAnimationFrame(loop);
     }
 }
@@ -613,6 +641,11 @@ function update() {
             boss.hp = 6000;
             document.getElementById("boss-hp-label").innerText = "BOSS HP (Phase 2)";
             eBullets = [];
+
+            // フェーズ1のBGMを止めて、haikei2.wavを1回再生開始
+            bgmAudio.pause();
+            bgmAudio2.currentTime = 0;
+            bgmAudio2.play().catch(e => console.log("BGM2 play failed:", e));
         } else {
             win();
         }
@@ -622,6 +655,8 @@ function update() {
 function gameOver() {
     isGameOver = true;
     bgmAudio.pause();
+    bgmAudio2.pause();
+    bgmAudio3.pause();
     document.getElementById("final-score").innerText = score;
     document.getElementById("gameover-screen").style.display = 'flex';
 }
@@ -629,6 +664,8 @@ function gameOver() {
 function win() {
     isGameOver = true;
     bgmAudio.pause();
+    bgmAudio2.pause();
+    bgmAudio3.pause();
     document.getElementById("win-score").innerText = score;
     document.getElementById("win-screen").style.display = 'flex';
 }
@@ -649,6 +686,8 @@ function resetGame() {
     document.getElementById("win-screen").style.display = 'none';
     document.getElementById("pause-screen").style.display = 'none';
 
+    bgmAudio2.pause();
+    bgmAudio3.pause();
     bgmAudio.currentTime = 0;
     bgmAudio.play().catch(e => {});
     
