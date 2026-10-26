@@ -511,14 +511,15 @@ function shoot() {
                     eBullets.push(new Bullet(b.x, b.y, Math.cos(randomAngle) * speed, Math.sin(randomAngle) * speed, "#ffffff", 3, false));
                 }
             } else if (b.phase === 2) {
-                // ボスフェーズ2：4秒（240F）発射、0.4秒（24F）休憩の周期
-                // 1サイクル 264フレームの中で 240フレーム未満の間のみ 3フレーム間隔で発射
-                if (f % 264 < 240) {
+                // ボスフェーズ2：約3秒間（150フレーム）発射、0.75秒間（45フレーム）休憩のサイクル
+                let cycleFrame = f % 195; // 全体195フレーム（約3.25秒）周期
+                if (cycleFrame < 150) { // 最初の150フレーム（2.5秒〜3秒）は発射
                     if (f % 3 === 0) {
                         let baseAngle = f * 0.04;
                         createStopRing(b.x, b.y, baseAngle, 4.4, "#ff33aa", 2.8, 32, true);
                     }
                 }
+                // 150〜194フレーム（0.75秒間）は何も射出せず休憩
             }
         }
     }
