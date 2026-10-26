@@ -1,6 +1,6 @@
 <html lang="ja"><head>
     <meta charset="UTF-8">
-    <title>Danmaku STG - Subterranean Extra Start with Z Key</title>
+    <title> kinesaiks Subterranean Extra</title>
     <style>
         body { background: #000; color: #fff; font-family: 'Courier New', monospace; margin: 0; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; }
         
@@ -55,7 +55,7 @@
     <!-- ポーズ画面 -->
     <div id="pause-screen">
         <h1 style="color:#0ff; font-size:50px; margin-bottom:10px;">PAUSE</h1>
-        <p style="color:#fff; font-size:20px;">[Esc] to Resume</p>
+        <p style="color:#fff; font-size:20px;">[Esc] or [Z] to Resume</p>
     </div>
 
     <!-- 被弾（ゲームオーバー）画面 -->
@@ -63,6 +63,7 @@
         <h1 style="color:#f33; font-size:40px; margin-bottom:10px;">GAME OVER</h1>
         <p style="color:#fff; font-size:18px;">被弾しました！</p>
         <p style="color:#ff0; font-size:20px; margin-top:10px;">SCORE: <span id="final-score">0</span></p>
+        <p style="color:#aaa; font-size:14px; margin-top:5px;">[R] または [Z] キーでもリトライできます</p>
         <button class="dialog-btn" onclick="resetGame()">RETRY</button>
     </div>
 
@@ -71,6 +72,7 @@
         <h1 style="color:#0ff; font-size:40px; margin-bottom:10px;">STAGE CLEAR!</h1>
         <p style="color:#fff; font-size:18px;">神の領域の回避力です！</p>
         <p style="color:#ff0; font-size:20px; margin-top:10px;">FINAL SCORE: <span id="win-score">0</span></p>
+        <p style="color:#aaa; font-size:14px; margin-top:5px;">[R] または [Z] キーでもリトライできます</p>
         <button class="dialog-btn" onclick="resetGame()">PLAY AGAIN</button>
     </div>
 
@@ -115,8 +117,29 @@ window.addEventListener('keydown', (e) => {
         toggleFullscreen();
     }
 
+    // [R] キーで即座にリトライ（ゲームオーバー中・クリア中などいつでもOK）
+    if (e.code === 'KeyR') {
+        e.preventDefault();
+        resetGame();
+        return;
+    }
+
+    // ゲームオーバー画面またはクリア画面が表示されているときにZ/Yキーが押されたらリトライ
+    if (isGameOver && (e.code === 'KeyZ' || e.code === 'KeyY')) {
+        e.preventDefault();
+        resetGame();
+        return;
+    }
+
     // Escキーでポーズ切り替え
     if (e.code === 'Escape' && gameStarted && !isGameOver) {
+        e.preventDefault();
+        togglePause();
+        return;
+    }
+
+    // ポーズ中にZキーが押されたらゲーム再開
+    if (isPaused && (e.code === 'KeyZ' || e.code === 'KeyY')) {
         e.preventDefault();
         togglePause();
         return;
