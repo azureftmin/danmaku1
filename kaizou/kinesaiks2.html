@@ -316,23 +316,36 @@ class Bullet {
     }
 }
 
-// --- 弾幕＆雑魚ウェーブ定義 ---
+// --- 弾幕＆雑魚ウェーブ定義（左右両方から同密度で発射） ---
 function shoot() {
     if (isTransitioning) return;
     const f = frames;
 
     if (f < 600) {
-        if (f % 15 === 0) {
-            const waveIndex = Math.floor(f / 15);
-            const fromLeft = (waveIndex % 2 === 0);
-            const count = 40;
+        if (f % 0.625 === 0) { 
+            const count = 160; 
+            
+            // 左側からのウェーブ
             for (let i = 0; i < count; i++) {
-                let mobX = fromLeft ? (-30 - i * 14) : (canvas.width + 30 + i * 14);
+                let mobX = -30 - i * 14;
                 let mobY = 40 + (i * 2.5);
                 mobs.push({
                     x: mobX,
                     y: mobY,
-                    vx: fromLeft ? 6.5 : -6.5,
+                    vx: 6.5,
+                    vy: 0.8,
+                    hasShot: false
+                });
+            }
+
+            // 右側からのウェーブ（同時発射・同密度）
+            for (let i = 0; i < count; i++) {
+                let mobX = canvas.width + 30 + i * 14;
+                let mobY = 40 + (i * 2.5);
+                mobs.push({
+                    x: mobX,
+                    y: mobY,
+                    vx: -6.5,
                     vy: 0.8,
                     hasShot: false
                 });
