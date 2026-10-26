@@ -233,7 +233,7 @@ const player = {
 };
 
 const boss = {
-    x: 225, y: -100, targetY: 100, r: 30, 
+    x: 225, y: -100, targetY: 100, r: 32, 
     hp: 500, maxHp: 500, phase: 1,
     reset() {
         this.x = 225;
@@ -245,18 +245,114 @@ const boss = {
     },
     update() {
         if (frames >= 600) {
-            if (this.y < this.targetY) this.y += 2;
-            else {
-                this.x = 225 + Math.sin(frames * 0.015) * 90;
-                this.y = 100 + Math.cos(frames * 0.02) * 20;
+            if (this.phase === 1) {
+                if (this.y < this.targetY) this.y += 2;
+                else {
+                    this.x = 225 + Math.sin(frames * 0.015) * 90;
+                    this.y = 100 + Math.cos(frames * 0.02) * 20;
+                }
+            } else if (this.phase === 2) {
+                // フェーズ2は完全に動かず中央固定
+                this.x = 225;
+                this.y = 100;
             }
         }
     },
     draw() {
         if (this.y > 0) {
-            ctx.strokeStyle = (this.phase === 1) ? "#ff55ff" : "#55ffff"; 
-            ctx.lineWidth = 3;
-            ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.stroke();
+            ctx.save();
+            
+            let baseColor = (this.phase === 1) ? "255, 0, 255" : "0, 255, 255";
+            let strokeHex = (this.phase === 1) ? "#ff55ff" : "#55ffff";
+
+            // 1. 強烈なグロー（発光）エフェクト
+            ctx.shadowBlur = 25;
+            ctx.shadowColor = strokeHex;
+
+            // --- 2. ボスの周囲に浮かぶ魔法陣 ---
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            
+            let magicCircleR = this.r * 2.0;
+
+            ctx.rotate(frames * 0.01);
+            ctx.strokeStyle = `rgba(${baseColor}, 0.22)`;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(0, 0, magicCircleR, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+                let angle = (Math.PI / 3) * i;
+                let px = Math.cos(angle) * magicCircleR;
+                let py = Math.sin(angle) * magicCircleR;
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.stroke();
+
+            ctx.rotate(-frames * 0.02);
+            ctx.strokeStyle = `rgba(${baseColor}, 0.18)`;
+            ctx.beginPath();
+            ctx.arc(0, 0, magicCircleR * 0.8, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.arc(0, 0, magicCircleR * 0.9, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            ctx.restore();
+
+            // 3. ボス本体の描画（フェーズ2では肌の色を黒色に設定）
+            if (this.phase === 2) {
+                ctx.fillStyle = "#000000"; // 肌の色：黒
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.fill();
+
+                ctx.strokeStyle = strokeHex; 
+                ctx.lineWidth = 4;
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.stroke();
+            } else {
+                ctx.fillStyle = "#330033";
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.fill();
+
+                ctx.strokeStyle = strokeHex; 
+                ctx.lineWidth = 4;
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.stroke();
+            }
+
+            // --- 4. フェーズ2限定：ドット絵表情（目と口の色：黄色） ---
+            if (this.phase === 2) {
+                ctx.save();
+                const p = 3; // ドットの1マスのサイズ
+                ctx.fillStyle = "#ffcc00"; // 目と口の色：黄色
+
+                // 縦長の楕円ドット目（左目）
+                ctx.fillRect(this.x - 11, this.y - 15, p * 2, p * 4);
+
+                // 縦長の楕円ドット目（右目）
+                ctx.fillRect(this.x + 5, this.y - 15, p * 2, p * 4);
+
+                // への字口（曲がった口のドット再現）
+                ctx.fillRect(this.x - 12, this.y + 11, p * 2, p);
+                ctx.fillRect(this.x - 8,  this.y + 8,  p * 2, p);
+                ctx.fillRect(this.x - 3,  this.y + 6,  p * 2, p);
+                ctx.fillRect(this.x + 2,  this.y + 6,  p * 2, p);
+                ctx.fillRect(this.x + 6,  this.y + 8,  p * 2, p);
+                ctx.fillRect(this.x + 9,  this.y + 11, p * 2, p * 2);
+
+                ctx.restore();
+            }
+
+            // 5. 脈動するオーラリング
+            let auraScale = this.r + 8 + Math.sin(frames * 0.1) * 5;
+            ctx.strokeStyle = `rgba(${baseColor}, 0.35)`;
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(this.x, this.y, auraScale, 0, Math.PI*2); ctx.stroke();
+
+            ctx.restore();
         }
     }
 };
@@ -266,12 +362,13 @@ let pBullets = [];
 let mobs = [];
 
 class Bullet {
-    constructor(x, y, vx, vy, color, r, isPhase1 = false, isSpecialStop = false) {
+    constructor(x, y, vx, vy, color, r, isPhase1 = false, isSpecialStop = false, turnDir = 1) {
         this.x = x; this.y = y; this.vx = vx; this.vy = vy; this.color = color; this.r = r;
         this.origVx = vx;
         this.origVy = vy;
         this.isPhase1 = isPhase1;
         this.isSpecialStop = isSpecialStop;
+        this.turnDir = turnDir; // 1（右向き）または -1（左向き）
         this.state = 'MOVING';
         this.stopTargetY = y + 150;
         this.timer = 0;
@@ -282,7 +379,8 @@ class Bullet {
             if (this.state === 'MOVING') {
                 this.x += this.vx;
                 this.y += this.vy;
-                if (this.y >= player.y - 25) {
+                // 自機のすぐ直前ギリギリ（Y=518付近）で一斉にピタッと停止
+                if (this.y >= 518) {
                     this.vx = 0;
                     this.vy = 0;
                     this.state = 'STOPPED';
@@ -291,7 +389,8 @@ class Bullet {
                 this.timer++;
                 if (this.timer > 35) { 
                     let baseAngle = Math.atan2(this.origVy, this.origVx);
-                    let angleOffset = (Math.random() - 0.5) * (Math.PI / 6);
+                    // 右向き・左向きを交互に約7.5度振る
+                    let angleOffset = this.turnDir * (7.5 * Math.PI / 180);
                     let finalAngle = baseAngle + angleOffset;
                     let slowSpeed = 0.9;
                     this.vx = Math.cos(finalAngle) * slowSpeed;
@@ -412,9 +511,13 @@ function shoot() {
                     eBullets.push(new Bullet(b.x, b.y, Math.cos(randomAngle) * speed, Math.sin(randomAngle) * speed, "#ffffff", 3, false));
                 }
             } else if (b.phase === 2) {
-                // ボスフェーズ2：発射周期を速く（約1.3倍速い 17フレームごと）
-                if (f % 17 === 0) {
-                    createStopRing(b.x, b.y, f * 0.03, 4.4, "#ff33aa", 2.8, 128, true);
+                // ボスフェーズ2：4秒（240F）発射、0.4秒（24F）休憩の周期
+                // 1サイクル 264フレームの中で 240フレーム未満の間のみ 3フレーム間隔で発射
+                if (f % 264 < 240) {
+                    if (f % 3 === 0) {
+                        let baseAngle = f * 0.04;
+                        createStopRing(b.x, b.y, baseAngle, 4.4, "#ff33aa", 2.8, 32, true);
+                    }
                 }
             }
         }
@@ -431,7 +534,9 @@ function createRing(x, y, startAngle, speed, color, r, count, isPhase1) {
 function createStopRing(x, y, startAngle, speed, color, r, count, isSpecialStop) {
     for (let i = 0; i < count; i++) {
         const angle = startAngle + (Math.PI * 2 / count) * i;
-        eBullets.push(new Bullet(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, color, r, false, isSpecialStop));
+        // 弾ごとに右向き(+1)と左向き(-1)を交互に割り当てる
+        const turnDir = (i % 2 === 0) ? 1 : -1;
+        eBullets.push(new Bullet(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, color, r, false, isSpecialStop, turnDir));
     }
 }
 
