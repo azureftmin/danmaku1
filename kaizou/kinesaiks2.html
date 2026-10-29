@@ -63,7 +63,7 @@
         <h1 style="color:#f33; font-size:40px; margin-bottom:10px;">GAME OVER</h1>
         <p style="color:#fff; font-size:18px;">被弾しました！</p>
         <p style="color:#ff0; font-size:20px; margin-top:10px;">SCORE: <span id="final-score">0</span></p>
-        <p style="color:#aaa; font-size:14px; margin-top:5px;">[R] または [Z] キーでもリトライできます</p>
+        <p style="color:#aaa; font-size:14px; margin-top:5px;">[Z]キーでリトライ([R]キーで倍速リトライ<変人用>)</p>
         <button class="dialog-btn" onclick="resetGame()">RETRY</button>
     </div>
 
@@ -639,7 +639,7 @@ function update() {
             boss.phase = 2;
             boss.maxHp = 6000;
             boss.hp = 6000;
-            document.getElementById("boss-hp-label").innerText = "BOSS HP (Phase 2)";
+            document.getElementById("boss-hp-label").innerText = "BOSS HP";
             eBullets = [];
 
             // フェーズ1のBGMを止めて、haikei2.wavを1回再生開始
