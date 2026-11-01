@@ -84,21 +84,22 @@
 const hashiraImg = new Image();
 hashiraImg.src = 'hashira.png';
 
+const jimenImg = new Image();
+jimenImg.src = 'jimen.png';
+
 // --- BGMの読み込み ---
 const bgmAudio = new Audio('haikei.wav');
 bgmAudio.loop = true;
 bgmAudio.volume = 0.5;
 
-// フェーズ2用のBGMオブジェクト
 const bgmAudio2 = new Audio('haikei2.wav');
-bgmAudio2.loop = false; // 1回再生
+bgmAudio2.loop = false;
 bgmAudio2.volume = 0.5;
 
 const bgmAudio3 = new Audio('haikei3.wav');
-bgmAudio3.loop = true; // ループ再生
+bgmAudio3.loop = true;
 bgmAudio3.volume = 0.5;
 
-// haikei2.wav が終了した瞬間に haikei3.wav を再生するイベントリスナー
 bgmAudio2.addEventListener('ended', () => {
     if (boss.phase === 2 && !isGameOver && !isPaused) {
         bgmAudio3.currentTime = 0;
@@ -111,7 +112,6 @@ const ctx = canvas.getContext("2d");
 canvas.width = 450;
 canvas.height = 600;
 
-// --- ゲーム設定 ---
 let stage = 51;
 let score = 0;
 let frames = 0;
@@ -122,7 +122,6 @@ let gameStarted = false;
 
 const keys = {};
 
-// ゲーム開始処理用の共通関数
 function startGame() {
     if (!gameStarted) {
         gameStarted = true;
@@ -187,7 +186,6 @@ function togglePause() {
         bgmAudio3.pause();
     } else {
         if (boss.phase === 2) {
-            // フェーズ2でポーズ解除された場合、再生中のBGMを再開
             if (!bgmAudio2.ended && bgmAudio2.currentTime > 0) {
                 bgmAudio2.play().catch(e => {});
             } else {
@@ -219,16 +217,15 @@ function toggleFullscreen() {
     }
 }
 
-// --- 3D背景（石造り回廊風パース） ---
 const focalLength = 220;
 const fovCenterX = canvas.width / 2;
 const fovCenterY = canvas.height / 2;
 const maxZ = 1000;
 
-// 柱の配置数を調整
 const pillars3D = [];
-for (let i = 0; i < 12; i++) {
-    pillars3D.push({ z: (i / 12) * maxZ, width: 140 });
+const pillarCount = 8;
+for (let i = 0; i < pillarCount; i++) {
+    pillars3D.push({ z: (i / pillarCount) * maxZ });
 }
 
 const snowParticles = [];
@@ -241,7 +238,6 @@ for (let i = 0; i < 60; i++) {
     });
 }
 
-// --- オブジェクト ---
 const player = {
     x: 225, y: 520, 
     startX: 225, startY: 520,
@@ -285,7 +281,6 @@ const boss = {
                     this.y = 100 + Math.cos(frames * 0.02) * 20;
                 }
             } else if (this.phase === 2) {
-                // フェーズ2は完全に動かず中央固定
                 this.x = 225;
                 this.y = 100;
             }
@@ -298,11 +293,9 @@ const boss = {
             let baseColor = (this.phase === 1) ? "255, 0, 255" : "0, 255, 255";
             let strokeHex = (this.phase === 1) ? "#ff55ff" : "#55ffff";
 
-            // 1. 強烈なグロー（発光）エフェクト
             ctx.shadowBlur = 25;
             ctx.shadowColor = strokeHex;
 
-            // --- 2. ボスの周囲に浮かぶ魔法陣 ---
             ctx.save();
             ctx.translate(this.x, this.y);
             
@@ -339,9 +332,8 @@ const boss = {
             
             ctx.restore();
 
-            // 3. ボス本体の描画（フェーズ2では肌の色を黒色に設定）
             if (this.phase === 2) {
-                ctx.fillStyle = "#000000"; // 肌の色：黒
+                ctx.fillStyle = "#000000";
                 ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.fill();
 
                 ctx.strokeStyle = strokeHex; 
@@ -356,19 +348,14 @@ const boss = {
                 ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI*2); ctx.stroke();
             }
 
-            // --- 4. フェーズ2限定：ドット絵表情（目と口の色：黄色） ---
             if (this.phase === 2) {
                 ctx.save();
-                const p = 3; // ドットの1マスのサイズ
-                ctx.fillStyle = "#ffcc00"; // 目と口の色：黄色
+                const p = 3; 
+                ctx.fillStyle = "#ffcc00"; 
 
-                // 縦長の楕円ドット目（左目）
                 ctx.fillRect(this.x - 11, this.y - 15, p * 2, p * 4);
-
-                // 縦長の楕円ドット目（右目）
                 ctx.fillRect(this.x + 5, this.y - 15, p * 2, p * 4);
 
-                // への字口（曲がった口のドット再現）
                 ctx.fillRect(this.x - 12, this.y + 11, p * 2, p);
                 ctx.fillRect(this.x - 8,  this.y + 8,  p * 2, p);
                 ctx.fillRect(this.x - 3,  this.y + 6,  p * 2, p);
@@ -379,7 +366,6 @@ const boss = {
                 ctx.restore();
             }
 
-            // 5. 脈動するオーラリング
             let auraScale = this.r + 8 + Math.sin(frames * 0.1) * 5;
             ctx.strokeStyle = `rgba(${baseColor}, 0.35)`;
             ctx.lineWidth = 2;
@@ -401,7 +387,7 @@ class Bullet {
         this.origVy = vy;
         this.isPhase1 = isPhase1;
         this.isSpecialStop = isSpecialStop;
-        this.turnDir = turnDir; // 1（右向き）または -1（左向き）
+        this.turnDir = turnDir;
         this.state = 'MOVING';
         this.stopTargetY = y + 150;
         this.timer = 0;
@@ -412,7 +398,6 @@ class Bullet {
             if (this.state === 'MOVING') {
                 this.x += this.vx;
                 this.y += this.vy;
-                // 自機のすぐ直前ギリギリ（Y=518付近）で一斉にピタッと停止
                 if (this.y >= 518) {
                     this.vx = 0;
                     this.vy = 0;
@@ -422,7 +407,6 @@ class Bullet {
                 this.timer++;
                 if (this.timer > 35) { 
                     let baseAngle = Math.atan2(this.origVy, this.origVx);
-                    // 右向き・左向きを交互に約7.5度振る
                     let angleOffset = this.turnDir * (7.5 * Math.PI / 180);
                     let finalAngle = baseAngle + angleOffset;
                     let slowSpeed = 0.9;
@@ -475,7 +459,6 @@ class Bullet {
     }
 }
 
-// --- 弾幕＆雑魚ウェーブ定義 ---
 function shoot() {
     if (isTransitioning) return;
     const f = frames;
@@ -544,15 +527,13 @@ function shoot() {
                     eBullets.push(new Bullet(b.x, b.y, Math.cos(randomAngle) * speed, Math.sin(randomAngle) * speed, "#ffffff", 3, false));
                 }
             } else if (b.phase === 2) {
-                // ボスフェーズ2：約3秒間（150フレーム）発射、0.75秒間（45フレーム）休憩のサイクル
-                let cycleFrame = f % 195; // 全体195フレーム（約3.25秒）周期
-                if (cycleFrame < 150) { // 最初の150フレーム（2.5秒〜3秒）は発射
+                let cycleFrame = f % 195;
+                if (cycleFrame < 150) {
                     if (f % 3 === 0) {
                         let baseAngle = f * 0.04;
                         createStopRing(b.x, b.y, baseAngle, 4.4, "#ff33aa", 2.8, 32, true);
                     }
                 }
-                // 150〜194フレーム（0.75秒間）は何も射出せず休憩
             }
         }
     }
@@ -568,13 +549,11 @@ function createRing(x, y, startAngle, speed, color, r, count, isPhase1) {
 function createStopRing(x, y, startAngle, speed, color, r, count, isSpecialStop) {
     for (let i = 0; i < count; i++) {
         const angle = startAngle + (Math.PI * 2 / count) * i;
-        // 弾ごとに右向き(+1)と左向き(-1)を交互に割り当てる
         const turnDir = (i % 2 === 0) ? 1 : -1;
         eBullets.push(new Bullet(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, color, r, false, isSpecialStop, turnDir));
     }
 }
 
-// --- メインループ ---
 function update() {
     if (isGameOver || isPaused) return;
     frames++;
@@ -582,7 +561,6 @@ function update() {
     boss.update();
     shoot();
 
-    // 自機弾の発射
     if (keys['KeyZ'] && frames % 5 === 0) {
         pBullets.push({
             x: player.x,
@@ -604,7 +582,6 @@ function update() {
         });
     }
 
-    // 自機弾の更新とボスへのヒット判定
     pBullets.forEach((pb, i) => {
         pb.update();
         if (boss.y > 0 && Math.hypot(pb.x - boss.x, pb.y - boss.y) < boss.r + pb.r) {
@@ -617,12 +594,10 @@ function update() {
         }
     });
 
-    // ボス本体との接触判定
     if (boss.y > 0 && Math.hypot(boss.x - player.x, boss.y - player.y) < boss.r + player.r) {
         gameOver();
     }
 
-    // 敵弾との接触判定
     eBullets.forEach((eb, i) => {
         eb.update();
 
@@ -638,7 +613,6 @@ function update() {
     document.getElementById("hp-bar-fill").style.width = Math.max(0, (boss.hp / boss.maxHp * 100)) + "%";
     document.getElementById("score-val").innerText = score;
 
-    // ボスのフェーズ移行およびクリア判定
     if (boss.hp <= 0 && !isTransitioning) {
         if (boss.phase === 1) {
             boss.phase = 2;
@@ -647,7 +621,6 @@ function update() {
             document.getElementById("boss-hp-label").innerText = "BOSS HP";
             eBullets = [];
 
-            // フェーズ1のBGMを止めて、haikei2.wavを1回再生開始
             bgmAudio.pause();
             bgmAudio2.currentTime = 0;
             bgmAudio2.play().catch(e => console.log("BGM2 play failed:", e));
@@ -699,7 +672,6 @@ function resetGame() {
     requestAnimationFrame(loop);
 }
 
-// 4頂点の台形（パース付き四角形）として画像を歪めて描画するヘルパー関数
 function drawWarpedImage(img, p1, p2, p3, p4, brightness) {
     if (!img.complete || img.naturalWidth === 0) return;
     
@@ -712,7 +684,6 @@ function drawWarpedImage(img, p1, p2, p3, p4, brightness) {
     ctx.closePath();
     ctx.clip();
 
-    // 簡易的なバウンディングボックスで描画
     const minX = Math.min(p1.x, p2.x, p3.x, p4.x);
     const maxX = Math.max(p1.x, p2.x, p3.x, p4.x);
     const minY = Math.min(p1.y, p2.y, p3.y, p4.y);
@@ -722,7 +693,6 @@ function drawWarpedImage(img, p1, p2, p3, p4, brightness) {
 
     ctx.drawImage(img, minX, minY, w, h);
 
-    // 陰影フィルター
     if (brightness < 1.0) {
         ctx.fillStyle = `rgba(0,0,0,${1.0 - brightness})`;
         ctx.fillRect(minX, minY, w, h);
@@ -733,7 +703,6 @@ function drawWarpedImage(img, p1, p2, p3, p4, brightness) {
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // --- 背景描画 ---
     const bgGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
     bgGrad.addColorStop(0, '#1c1b22');
     bgGrad.addColorStop(0.5, '#2c2a35');
@@ -743,55 +712,82 @@ function draw() {
 
     const speedZ = 6;
 
-    pillars3D.sort((a, b) => b.z - a.z);
+    // 柱の前進とZ座標更新
     pillars3D.forEach(p => {
         p.z -= speedZ;
         if (p.z <= 10) p.z += maxZ;
+    });
 
-        // 透視投影スケール
+    // 奥から手前へソート
+    pillars3D.sort((a, b) => b.z - a.z);
+
+    // 描画用の座標データを前計算
+    const pillarData = pillars3D.map(p => {
         const scale = focalLength / p.z;
         const alpha = Math.min(1, Math.max(0, (maxZ - p.z) / 300));
-
-        // 真ん中の一直線の奥（fovCenterX, fovCenterY）から両端側へ広がるパース計算
-        const spreadX = 220 * scale; 
+        
+        // 奥の消失点から完全な直線パースで外側へ伸びる座標を計算
+        const spreadX = 260 * scale; 
         const leftX = fovCenterX - spreadX;
         const rightX = fovCenterX + spreadX;
+        
+        // 【修正】奥（zが大きい）のときは短くして先端（上部）が見え、手前に来ると大きく伸びるようにスケールに応じた長さに設定
+        const baseH = 750 + (1 - (p.z / maxZ)) * 450;
+        const pillarH = baseH * scale;
+        const faceW = 20 * scale;
 
-        // 柱の基本高さ・幅の設定（縦引き延ばし＋画面内への収まり調整）
-        const pillarH = Math.min(canvas.height, 40 * scale * 16);
-        const faceW = Math.max(6, 16 * scale); 
-        const skewOffset = Math.max(2, 8 * scale); // 左右の面の傾き角度差分
+        const topY = fovCenterY - pillarH * 0.7;
+        const bottomY = fovCenterY + pillarH * 0.3;
 
-        // 柱の上端・下端のY位置（画面中央から広がる）
-        const topY = fovCenterY - pillarH / 2;
-        const bottomY = fovCenterY + pillarH / 2;
+        return {
+            z: p.z, scale, alpha, leftX, rightX,
+            faceW, topY, bottomY
+        };
+    });
 
-        // 左右それぞれの柱を描画
-        [leftX, rightX].forEach((cx, isRight) => {
+    // --- 1. 床パネル（jimen.png）を左右の柱に合わせて正確に敷き詰める ---
+    for (let i = 0; i < pillarData.length - 1; i++) {
+        const far = pillarData[i];     // 奥側の柱ペア
+        const near = pillarData[i + 1];// 手前側の柱ペア
+
+        if (near.z < far.z && (far.z - near.z) < (maxZ / pillarCount) * 2.5) {
+            ctx.save();
+            ctx.globalAlpha = Math.min(far.alpha, near.alpha);
+
+            const p1_floor = { x: far.leftX - far.faceW * 2.0, y: far.bottomY };
+            const p2_floor = { x: far.rightX + far.faceW * 2.0, y: far.bottomY };
+            const p3_floor = { x: near.rightX + near.faceW * 2.0, y: near.bottomY };
+            const p4_floor = { x: near.leftX - near.faceW * 2.0, y: near.bottomY };
+
+            drawWarpedImage(jimenImg, p1_floor, p2_floor, p3_floor, p4_floor, 0.85);
+            ctx.restore();
+        }
+    }
+
+    // --- 2. 左右の柱本体を描画（画面内で曲げず、純粋な拡大・直線移動） ---
+    pillarData.forEach(p => {
+        const { alpha, leftX, rightX, faceW, topY, bottomY } = p;
+
+        [leftX, rightX].forEach((cx) => {
             ctx.save();
             ctx.globalAlpha = alpha;
 
-            // --- 3枚の画像で一本の柱（立体構造）を作る ---
-            
-            // 1. 左面 (1枚目: 左向きに傾く)
-            const p1_left = { x: cx - faceW * 1.5, y: topY + (isRight ? -skewOffset : skewOffset) };
+            // 柱の前面・側面を曲げずにスケールに応じて正しく描画
+            const p1_left = { x: cx - faceW * 1.5, y: topY };
             const p2_left = { x: cx - faceW * 0.5, y: topY };
             const p3_left = { x: cx - faceW * 0.5, y: bottomY };
-            const p4_left = { x: cx - faceW * 1.5, y: bottomY + (isRight ? -skewOffset : skewOffset) };
+            const p4_left = { x: cx - faceW * 1.5, y: bottomY };
 
-            // 2. 正面 (2枚目: そのままの向き)
             const p1_mid = { x: cx - faceW * 0.5, y: topY };
             const p2_mid = { x: cx + faceW * 0.5, y: topY };
             const p3_mid = { x: cx + faceW * 0.5, y: bottomY };
             const p4_mid = { x: cx - faceW * 0.5, y: bottomY };
 
-            // 3. 右面 (3枚目: 1枚目と均等な角度で右向きに傾く)
             const p1_right = { x: cx + faceW * 0.5, y: topY };
-            const p2_right = { x: cx + faceW * 1.5, y: topY + (isRight ? skewOffset : -skewOffset) };
-            const p3_right = { x: cx + faceW * 1.5, y: bottomY + (isRight ? skewOffset : -skewOffset) };
+            const p2_right = { x: cx + faceW * 1.5, y: topY };
+            const p3_right = { x: cx + faceW * 1.5, y: bottomY };
             const p4_right = { x: cx + faceW * 0.5, y: bottomY };
 
-            // 描画実行（端同士が接した3面＋立体感を強調する明暗）
             drawWarpedImage(hashiraImg, p1_left, p2_left, p3_left, p4_left, 0.6);
             drawWarpedImage(hashiraImg, p1_mid, p2_mid, p3_mid, p4_mid, 1.0);
             drawWarpedImage(hashiraImg, p1_right, p2_right, p3_right, p4_right, 0.65);
@@ -824,14 +820,12 @@ function draw() {
         ctx.beginPath(); ctx.arc(m.x, m.y, 8, 0, Math.PI*2); ctx.fill();
     });
 
-    // --- オブジェクト描画 ---
     player.draw();
     boss.draw();
     pBullets.forEach(b => b.draw());
     eBullets.forEach(b => b.draw());
 }
 
-// 初期画面メッセージ描画
 function renderTitle() {
     ctx.fillStyle = '#fff'; ctx.font = '20px Courier New'; ctx.textAlign = 'center';
     ctx.fillText('CLICK OR [Z] TO START', canvas.width / 2, canvas.height / 2 - 10);
@@ -840,7 +834,6 @@ function renderTitle() {
 }
 renderTitle();
 
-// キャンバス自体の直接クリックでもゲームを開始
 canvas.addEventListener('mousedown', () => {
     startGame();
 });
